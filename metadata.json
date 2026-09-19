@@ -1,0 +1,6 @@
+{
+  "name": "Portal de Estudos e Atividades Escolares",
+  "description": "Plataforma completa e moderna de estudos e atividades escolares com portais dedicados para Alunos e Direção escolar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
