@@ -29,9 +29,11 @@ import {
   Copy,
   Archive,
   ArchiveRestore,
+  Database,
 } from 'lucide-react';
 import { ActivityFormModal } from './ActivityFormModal';
 import { SubmissionReviewModal } from './SubmissionReviewModal';
+import { isSupabaseConfigured } from '../../lib/supabase';
 
 interface DirectorDashboardProps {
   director: User;
@@ -40,6 +42,7 @@ interface DirectorDashboardProps {
   notices: SchoolNotice[];
   activeDirectorTab: string;
   onNavigateTab: (tab: string) => void;
+  onOpenSupabaseModal?: () => void;
   onCreateActivity: (newActivity: Activity) => void;
   onUpdateActivity?: (updatedActivity: Activity) => void;
   onDeleteActivity?: (activityId: string) => void;
@@ -63,6 +66,7 @@ export function DirectorDashboard({
   notices,
   activeDirectorTab,
   onNavigateTab,
+  onOpenSupabaseModal,
   onCreateActivity,
   onUpdateActivity,
   onDeleteActivity,
@@ -354,6 +358,21 @@ export function DirectorDashboard({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenSupabaseModal && (
+              <button
+                type="button"
+                id="dir-quick-supabase-btn"
+                onClick={onOpenSupabaseModal}
+                className="px-3.5 py-2.5 bg-emerald-600/80 hover:bg-emerald-600 text-white border border-emerald-400/40 text-xs font-bold rounded-2xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                title="Conexão e Sincronização com Banco Supabase"
+              >
+                <Database className="w-4 h-4 text-emerald-200" />
+                <span>Banco Supabase</span>
+                {isSupabaseConfigured() && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
+                )}
+              </button>
+            )}
             <button
               type="button"
               id="dir-quick-new-activity-btn"

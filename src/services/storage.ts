@@ -9,6 +9,17 @@ import {
   INITIAL_SCHEDULE,
   INITIAL_NOTIFICATIONS,
 } from '../data/mockData';
+import {
+  upsertStudentToSupabase,
+  upsertActivityToSupabase,
+  upsertNoticeToSupabase,
+} from './supabaseService';
+import {
+  hashPassword,
+  verifyPassword,
+  cleanPlainText,
+  isValidEmail,
+} from './security';
 
 const SESSION_KEY = 'escola_current_session';
 const STUDENTS_KEY = 'escola_registered_students';
@@ -31,20 +42,59 @@ export interface StorageState {
 // Inicializa dados no localStorage se vazios
 export function getInitialState(): StorageState {
   try {
-    const storedSession = localStorage.getItem(SESSION_KEY);
-    let currentUser: User | null = storedSession ? JSON.parse(storedSession) : null;
-    if (currentUser && currentUser.role === 'ALUNO') {
-      if (!currentUser.grade || currentUser.grade === '3º Ano - Ensino Médio') {
-        currentUser.grade = 'Desbravador - Guerreiros Da Serra';
-      }
-    }
-
     const storedStudents = localStorage.getItem(STUDENTS_KEY);
     let students = storedStudents ? JSON.parse(storedStudents) : INITIAL_STUDENTS;
-    students = students.map((s: User & { passwordHash?: string }) => ({
+    if (!Array.isArray(students) || students.length === 0) {
+      students = INITIAL_STUDENTS;
+    }
+    students = students.map((s: any) => ({
       ...s,
+      passwordHash: s.passwordHash || s.password || 'senha123',
       grade: s.grade && s.grade !== '3º Ano - Ensino Médio' ? s.grade : 'Desbravador - Guerreiros Da Serra',
     }));
+
+    const storedSession = localStorage.getItem(SESSION_KEY);
+    let currentUser: User | null = storedSession ? JSON.parse(storedSession) : null;
+
+    // Security check: Validate session integrity and prevent local privilege escalation
+    if (currentUser) {
+      if (currentUser.role === 'DIRETOR') {
+        const isLegitDirector =
+          currentUser.id === DEFAULT_DIRECTOR.id ||
+          currentUser.email?.toLowerCase() === DEFAULT_DIRECTOR.email.toLowerCase();
+        if (!isLegitDirector) {
+          console.warn('[Security] Sessão de diretor adulterada detectada. Resetando sessão.');
+          currentUser = null;
+          localStorage.removeItem(SESSION_KEY);
+        }
+      } else if (currentUser.role === 'ALUNO') {
+        const studentExists = students.some(
+          (s: User) => s.id === currentUser?.id || s.email?.toLowerCase() === currentUser?.email?.toLowerCase()
+        );
+        if (!studentExists) {
+          console.warn('[Security] Sessão de aluno não encontrada no cadastro. Resetando sessão.');
+          currentUser = null;
+          localStorage.removeItem(SESSION_KEY);
+        } else {
+          const found = students.find(
+            (s: User) => s.id === currentUser?.id || s.email?.toLowerCase() === currentUser?.email?.toLowerCase()
+          );
+          if (found) {
+            currentUser = {
+              ...currentUser,
+              id: found.id,
+              name: found.name,
+              avatar: found.avatar,
+              grade: found.grade || 'Desbravador - Guerreiros Da Serra',
+              birthDate: found.birthDate,
+            };
+          }
+        }
+      } else {
+        currentUser = null;
+        localStorage.removeItem(SESSION_KEY);
+      }
+    }
 
     const storedActivities = localStorage.getItem(ACTIVITIES_KEY);
     let activities: Activity[] = storedActivities ? JSON.parse(storedActivities) : INITIAL_ACTIVITIES;
@@ -113,6 +163,10 @@ export function persistSession(user: User | null): void {
 export function persistStudents(students: (User & { passwordHash: string })[]): void {
   try {
     localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
+    // Sincronização em segundo plano com Supabase se configurado
+    students.forEach((s) => {
+      upsertStudentToSupabase(s).catch(() => {});
+    });
   } catch (e) {
     console.error('Erro ao salvar alunos:', e);
   }
@@ -122,6 +176,10 @@ export function persistStudents(students: (User & { passwordHash: string })[]): 
 export function persistActivities(activities: Activity[]): void {
   try {
     localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(activities));
+    // Sincronização em segundo plano com Supabase se configurado
+    activities.forEach((act) => {
+      upsertActivityToSupabase(act).catch(() => {});
+    });
   } catch (e) {
     console.error('Erro ao salvar atividades:', e);
   }
@@ -137,9 +195,10 @@ export function saveActivityDraft(
   try {
     const storedActivities = localStorage.getItem(ACTIVITIES_KEY);
     const activities: Activity[] = storedActivities ? JSON.parse(storedActivities) : INITIAL_ACTIVITIES;
+    let targetAct: Activity | null = null;
     const updated = activities.map((act) => {
       if (act.id === activityId) {
-        return {
+        targetAct = {
           ...act,
           drafts: {
             ...(act.drafts || {}),
@@ -150,10 +209,14 @@ export function saveActivityDraft(
             },
           },
         };
+        return targetAct;
       }
       return act;
     });
     persistActivities(updated);
+    if (targetAct) {
+      upsertActivityToSupabase(targetAct).catch(() => {});
+    }
   } catch (e) {
     console.error('Erro ao salvar rascunho da atividade:', e);
   }
@@ -163,6 +226,10 @@ export function saveActivityDraft(
 export function persistNotices(notices: SchoolNotice[]): void {
   try {
     localStorage.setItem(NOTICES_KEY, JSON.stringify(notices));
+    // Sincronização em segundo plano com Supabase se configurado
+    notices.forEach((n) => {
+      upsertNoticeToSupabase(n).catch(() => {});
+    });
   } catch (e) {
     console.error('Erro ao salvar avisos:', e);
   }
@@ -178,15 +245,21 @@ export function persistCourses(courses: Course[]): void {
 }
 
 // Autenticação do Diretor
-export function loginDirector(identifier: string, passwordAttempt: string): { success: boolean; user?: User; error?: string } {
-  const cleanId = identifier.trim().toLowerCase();
-  const isMatchUser = cleanId === DEFAULT_DIRECTOR.username.toLowerCase() || cleanId === DEFAULT_DIRECTOR.email.toLowerCase();
+export async function loginDirector(
+  identifier: string,
+  passwordAttempt: string
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  const cleanId = cleanPlainText(identifier, 100).toLowerCase();
+  const isMatchUser =
+    cleanId === DEFAULT_DIRECTOR.username.toLowerCase() ||
+    cleanId === DEFAULT_DIRECTOR.email.toLowerCase();
 
   if (!isMatchUser) {
     return { success: false, error: 'Usuário ou e-mail do diretor não encontrado no sistema.' };
   }
 
-  if (passwordAttempt !== DEFAULT_DIRECTOR.passwordHash) {
+  const isValid = await verifyPassword(passwordAttempt, DEFAULT_DIRECTOR.passwordHash);
+  if (!isValid) {
     return { success: false, error: 'Senha incorreta. Verifique suas credenciais de diretor.' };
   }
 
@@ -204,18 +277,33 @@ export function loginDirector(identifier: string, passwordAttempt: string): { su
 }
 
 // Autenticação do Aluno
-export function loginStudent(emailAttempt: string, passwordAttempt: string): { success: boolean; user?: User; error?: string } {
-  const cleanEmail = emailAttempt.trim().toLowerCase();
-  const students = getInitialState().students;
+export async function loginStudent(
+  emailAttempt: string,
+  passwordAttempt: string
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  const cleanEmail = cleanPlainText(emailAttempt, 150).toLowerCase();
+  const currentState = getInitialState();
+  const students = currentState.students;
 
-  const found = students.find((s) => s.email.toLowerCase() === cleanEmail);
-
-  if (!found) {
+  const foundIndex = students.findIndex((s) => s.email.toLowerCase() === cleanEmail);
+  if (foundIndex === -1) {
     return { success: false, error: 'Nenhum aluno cadastrado com este e-mail. Crie sua conta primeiro.' };
   }
 
-  if (found.passwordHash !== passwordAttempt) {
+  const found = students[foundIndex] as any;
+  const hash = found.passwordHash || found.password || 'senha123';
+  const isValid = await verifyPassword(passwordAttempt, hash);
+
+  if (!isValid) {
     return { success: false, error: 'Senha incorreta para este e-mail.' };
+  }
+
+  // Se a senha estiver em texto puro legada, migra para hash criptográfico de forma transparente
+  if (found.passwordHash === passwordAttempt) {
+    const upgradedHash = await hashPassword(passwordAttempt);
+    const updatedList = [...students];
+    updatedList[foundIndex] = { ...found, passwordHash: upgradedHash };
+    persistStudents(updatedList);
   }
 
   const user: User = {
@@ -225,7 +313,7 @@ export function loginStudent(emailAttempt: string, passwordAttempt: string): { s
     email: found.email,
     avatar: found.avatar,
     birthDate: found.birthDate,
-    grade: found.grade || '3º Ano - Ensino Médio',
+    grade: found.grade || 'Desbravador - Guerreiros Da Serra',
     registrationNumber: found.registrationNumber || `2026-MED-${Math.floor(100 + Math.random() * 900)}`,
     createdAt: found.createdAt,
   };
@@ -246,30 +334,37 @@ export interface RegisterStudentData {
   birthYear: number;
 }
 
-export function validateAndRegisterStudent(data: RegisterStudentData): { success: boolean; user?: User; error?: string } {
+export async function validateAndRegisterStudent(
+  data: RegisterStudentData
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  const sanitizedName = cleanPlainText(data.name, 100);
+  const sanitizedEmail = cleanPlainText(data.email, 150).toLowerCase();
+
   // 1. Campos obrigatórios
-  if (!data.name.trim()) return { success: false, error: 'O nome completo é obrigatório.' };
-  if (!data.email.trim()) return { success: false, error: 'O e-mail/Gmail é obrigatório.' };
+  if (!sanitizedName) return { success: false, error: 'O nome completo é obrigatório.' };
+  if (!sanitizedEmail) return { success: false, error: 'O e-mail/Gmail é obrigatório.' };
   if (!data.password) return { success: false, error: 'A senha é obrigatória.' };
   if (!data.confirmPassword) return { success: false, error: 'Confirme a sua senha.' };
   if (!data.avatar) return { success: false, error: 'Selecione ou envie uma foto de perfil.' };
 
   // 2. Validação de Email
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(data.email.trim())) {
+  if (!isValidEmail(sanitizedEmail)) {
     return { success: false, error: 'Informe um endereço de e-mail ou Gmail válido.' };
   }
 
   // 3. Verificação de unicidade de e-mail
   const currentState = getInitialState();
-  const alreadyExists = currentState.students.some((s) => s.email.toLowerCase() === data.email.trim().toLowerCase());
-  if (alreadyExists || data.email.trim().toLowerCase() === DEFAULT_DIRECTOR.email.toLowerCase()) {
+  const alreadyExists = currentState.students.some((s) => s.email.toLowerCase() === sanitizedEmail);
+  if (alreadyExists || sanitizedEmail === DEFAULT_DIRECTOR.email.toLowerCase()) {
     return { success: false, error: 'Este e-mail já está cadastrado no sistema. Faça login.' };
   }
 
   // 4. Validação de Senha segura
   if (data.password.length < 6) {
     return { success: false, error: 'A senha deve conter no mínimo 6 caracteres para segurança.' };
+  }
+  if (data.password.length > 128) {
+    return { success: false, error: 'A senha excede o limite máximo permitido de 128 caracteres.' };
   }
   if (data.password !== data.confirmPassword) {
     return { success: false, error: 'As senhas não coincidem. Digite novamente.' };
@@ -292,16 +387,17 @@ export function validateAndRegisterStudent(data: RegisterStudentData): { success
     return { success: false, error: 'Ano de nascimento inválido para idade escolar.' };
   }
 
-  // Criação do aluno
+  // Criação segura com Hash Criptográfico
   const newStudentId = `stu-${Date.now()}`;
   const randomMatricula = `2026-MED-${Math.floor(100 + Math.random() * 900)}`;
+  const passwordHash = await hashPassword(data.password);
 
   const newStudentWithPass: User & { passwordHash: string } = {
     id: newStudentId,
     role: 'ALUNO',
-    name: data.name.trim(),
-    email: data.email.trim().toLowerCase(),
-    passwordHash: data.password,
+    name: sanitizedName,
+    email: sanitizedEmail,
+    passwordHash,
     avatar: data.avatar,
     birthDate: {
       day: birthDay,
@@ -347,11 +443,13 @@ export interface UpdateStudentProfileData {
   currentPasswordForEmailChange?: string;
 }
 
-export function updateStudentProfile(data: UpdateStudentProfileData): {
+export async function updateStudentProfile(
+  data: UpdateStudentProfileData
+): Promise<{
   success: boolean;
   user?: User;
   error?: string;
-} {
+}> {
   const currentState = getInitialState();
   const studentIndex = currentState.students.findIndex((s) => s.id === data.studentId);
 
@@ -368,20 +466,23 @@ export function updateStudentProfile(data: UpdateStudentProfileData): {
     if (!data.currentPasswordForPasswordChange) {
       return { success: false, error: 'Para alterar a senha, informe sua senha atual.' };
     }
-    if (data.currentPasswordForPasswordChange !== student.passwordHash) {
+    const isPassValid = await verifyPassword(
+      data.currentPasswordForPasswordChange,
+      student.passwordHash
+    );
+    if (!isPassValid) {
       return { success: false, error: 'A senha atual informada para troca de senha está incorreta.' };
     }
     if (data.newPassword.length < 6) {
       return { success: false, error: 'A nova senha deve possuir no mínimo 6 caracteres.' };
     }
-    updatedPass = data.newPassword;
+    updatedPass = await hashPassword(data.newPassword);
   }
 
   // 2. Verificação com controle de alteração seguro para Gmail / e-mail
   if (data.newEmail && data.newEmail.trim().toLowerCase() !== student.email.toLowerCase()) {
-    const cleanNewEmail = data.newEmail.trim().toLowerCase();
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(cleanNewEmail)) {
+    const cleanNewEmail = cleanPlainText(data.newEmail, 150).toLowerCase();
+    if (!isValidEmail(cleanNewEmail)) {
       return { success: false, error: 'O novo endereço de e-mail informado é inválido.' };
     }
 
@@ -392,7 +493,11 @@ export function updateStudentProfile(data: UpdateStudentProfileData): {
       };
     }
 
-    if (data.currentPasswordForEmailChange !== student.passwordHash) {
+    const isPassValid = await verifyPassword(
+      data.currentPasswordForEmailChange,
+      student.passwordHash
+    );
+    if (!isPassValid) {
       return {
         success: false,
         error: 'Senha de segurança incorreta. Não foi possível autorizar a troca do e-mail.',
@@ -409,10 +514,10 @@ export function updateStudentProfile(data: UpdateStudentProfileData): {
     updatedEmail = cleanNewEmail;
   }
 
-  // 3. Monta aluno atualizado
+  // 3. Monta aluno atualizado com sanitização de campos
   const updatedStudent = {
     ...student,
-    name: data.name?.trim() || student.name,
+    name: data.name ? cleanPlainText(data.name, 100) : student.name,
     avatar: data.avatar || student.avatar,
     email: updatedEmail,
     passwordHash: updatedPass,
@@ -429,7 +534,7 @@ export function updateStudentProfile(data: UpdateStudentProfileData): {
 
   const cleanUser: User = {
     id: updatedStudent.id,
-    role: 'ALUNO',
+    role: updatedStudent.role,
     name: updatedStudent.name,
     email: updatedStudent.email,
     avatar: updatedStudent.avatar,
@@ -442,3 +547,4 @@ export function updateStudentProfile(data: UpdateStudentProfileData): {
   persistSession(cleanUser);
   return { success: true, user: cleanUser };
 }
+

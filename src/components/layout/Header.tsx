@@ -27,6 +27,7 @@ interface HeaderProps {
   notices: SchoolNotice[];
   notifications?: AppNotification[];
   onOpenProfile?: () => void;
+  onOpenSupabaseModal?: () => void;
   onSelectNotice?: (notice: SchoolNotice) => void;
   onSelectNotification?: (notification: AppNotification) => void;
   onMarkNotificationAsRead?: (notifId: string) => void;
@@ -41,6 +42,7 @@ export function Header({
   notices,
   notifications = [],
   onOpenProfile,
+  onOpenSupabaseModal,
   onSelectNotice,
   onSelectNotification,
   onMarkNotificationAsRead,

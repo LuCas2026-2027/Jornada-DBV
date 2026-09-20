@@ -27,6 +27,13 @@ import { StudentProfilePage } from './components/student/StudentProfilePage';
 import { DirectorDashboard } from './components/director/DirectorDashboard';
 import { ProfileModal } from './components/student/ProfileModal';
 import { TeacherContactModal } from './components/student/TeacherContactModal';
+import { SupabaseModal } from './components/common/SupabaseModal';
+import {
+  fetchStudentsFromSupabase,
+  fetchActivitiesFromSupabase,
+  fetchNoticesFromSupabase,
+} from './services/supabaseService';
+import { isSupabaseConfigured } from './lib/supabase';
 
 export default function App() {
   const [appState, setAppState] = useState<StorageState>(() => getInitialState());
@@ -37,9 +44,35 @@ export default function App() {
   const [selectedNoticeId, setSelectedNoticeId] = useState<string | null>(null);
   const [contactTeacher, setContactTeacher] = useState<Teacher | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
 
   // Sync state changes with localStorage
   const { currentUser, students, activities, notices, courses, teachers, schedule, notifications = [] } = appState;
+
+  // Load data from Supabase if configured and available
+  const loadSupabaseData = async () => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const [remoteStudents, remoteActivities, remoteNotices] = await Promise.all([
+        fetchStudentsFromSupabase(),
+        fetchActivitiesFromSupabase(),
+        fetchNoticesFromSupabase(),
+      ]);
+
+      setAppState((prev) => ({
+        ...prev,
+        students: remoteStudents && remoteStudents.length > 0 ? remoteStudents : prev.students,
+        activities: remoteActivities && remoteActivities.length > 0 ? remoteActivities : prev.activities,
+        notices: remoteNotices && remoteNotices.length > 0 ? remoteNotices : prev.notices,
+      }));
+    } catch (e) {
+      console.warn('Erro ao carregar dados do Supabase:', e);
+    }
+  };
+
+  useEffect(() => {
+    loadSupabaseData();
+  }, []);
 
   useEffect(() => {
     // When director logs in, default tab is director dashboard
@@ -77,7 +110,10 @@ export default function App() {
     answerText: string,
     answersMap?: Record<string, string>
   ) => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.role !== 'ALUNO') {
+      console.warn('[Security] Ação não autorizada: Apenas alunos podem submeter atividades.');
+      return;
+    }
 
     const updatedActivities = activities.map((act) => {
       if (act.id === activityId) {
@@ -253,6 +289,10 @@ export default function App() {
 
   // Director Actions
   const handleCreateActivity = (newActData: Activity) => {
+    if (!currentUser || currentUser.role !== 'DIRETOR') {
+      console.warn('[Security] Ação não autorizada: Apenas a direção pode criar atividades.');
+      return;
+    }
     const newActivity: Activity = {
       ...newActData,
       id: newActData.id || `act-${Date.now()}`,
@@ -265,18 +305,30 @@ export default function App() {
   };
 
   const handleUpdateActivity = (updatedActivity: Activity) => {
+    if (!currentUser || currentUser.role !== 'DIRETOR') {
+      console.warn('[Security] Ação não autorizada: Apenas a direção pode editar atividades.');
+      return;
+    }
     const updated = activities.map((a) => (a.id === updatedActivity.id ? updatedActivity : a));
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
   };
 
   const handleDeleteActivity = (activityId: string) => {
+    if (!currentUser || currentUser.role !== 'DIRETOR') {
+      console.warn('[Security] Ação não autorizada: Apenas a direção pode excluir atividades.');
+      return;
+    }
     const updated = activities.filter((a) => a.id !== activityId);
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
   };
 
   const handleDuplicateActivity = (activityId: string) => {
+    if (!currentUser || currentUser.role !== 'DIRETOR') {
+      console.warn('[Security] Ação não autorizada: Apenas a direção pode duplicar atividades.');
+      return;
+    }
     const original = activities.find((a) => a.id === activityId);
     if (!original) return;
     const duplicated: Activity = {
@@ -292,6 +344,10 @@ export default function App() {
   };
 
   const handleToggleArchiveActivity = (activityId: string) => {
+    if (!currentUser || currentUser.role !== 'DIRETOR') {
+      console.warn('[Security] Ação não autorizada: Apenas a direção pode arquivar atividades.');
+      return;
+    }
     const updated = activities.map((a) =>
       a.id === activityId ? { ...a, isArchived: !a.isArchived } : a
     );
@@ -306,6 +362,10 @@ export default function App() {
     feedback: string,
     questionScores?: Record<string, number>
   ) => {
+    if (!currentUser || currentUser.role !== 'DIRETOR') {
+      console.warn('[Security] Ação não autorizada: Apenas a direção pode atribuir notas e correções.');
+      return;
+    }
     const updatedActivities = activities.map((act) => {
       if (act.id === activityId && act.submissions[studentId]) {
         return {
@@ -375,7 +435,20 @@ export default function App() {
 
   // If user is not authenticated, display AuthPortal
   if (!currentUser) {
-    return <AuthPortal onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <>
+        <AuthPortal
+          onLoginSuccess={handleLoginSuccess}
+          onOpenSupabaseModal={() => setShowSupabaseModal(true)}
+        />
+        <SupabaseModal
+          isOpen={showSupabaseModal}
+          onClose={() => setShowSupabaseModal(false)}
+          appState={appState}
+          onDataRefreshed={loadSupabaseData}
+        />
+      </>
+    );
   }
 
   // Pending count for student
@@ -422,6 +495,7 @@ export default function App() {
             notices={notices}
             notifications={notifications}
             onOpenProfile={() => setActiveTab('PROFILE')}
+            onOpenSupabaseModal={() => setShowSupabaseModal(true)}
             onSelectNotice={(notice) => {
               setSelectedNoticeId(notice.id);
               setActiveTab('NOTICES');
@@ -462,6 +536,7 @@ export default function App() {
               notices={notices}
               activeDirectorTab={activeTab}
               onNavigateTab={(tab) => setActiveTab(tab)}
+              onOpenSupabaseModal={() => setShowSupabaseModal(true)}
               onCreateActivity={handleCreateActivity}
               onUpdateActivity={handleUpdateActivity}
               onDeleteActivity={handleDeleteActivity}
@@ -591,6 +666,14 @@ export default function App() {
           onClose={() => setContactTeacher(null)}
         />
       )}
+
+      {/* Supabase Connection & Synchronization Modal */}
+      <SupabaseModal
+        isOpen={showSupabaseModal}
+        onClose={() => setShowSupabaseModal(false)}
+        appState={appState}
+        onDataRefreshed={loadSupabaseData}
+      />
     </div>
   );
 }

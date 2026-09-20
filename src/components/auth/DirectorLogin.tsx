@@ -15,7 +15,7 @@ export function DirectorLogin({ onSuccess, onSwitchToStudent }: DirectorLoginPro
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -29,15 +29,18 @@ export function DirectorLogin({ onSuccess, onSwitchToStudent }: DirectorLoginPro
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const result = loginDirector(identifier, password);
+    try {
+      const result = await loginDirector(identifier, password);
       setIsLoading(false);
       if (result.success && result.user) {
         onSuccess(result.user);
       } else {
         setErrorMessage(result.error || 'Credenciais de diretor inválidas.');
       }
-    }, 400);
+    } catch {
+      setIsLoading(false);
+      setErrorMessage('Erro ao autenticar. Tente novamente.');
+    }
   };
 
   const handleFillDemoCredentials = () => {

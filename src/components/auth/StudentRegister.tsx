@@ -84,20 +84,23 @@ export function StudentRegister({ onSuccess, onSwitchToLogin }: StudentRegisterP
     setFormData((prev) => ({ ...prev, avatar: url }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      const result = validateAndRegisterStudent(formData);
+    try {
+      const result = await validateAndRegisterStudent(formData);
       setIsLoading(false);
       if (result.success && result.user) {
         onSuccess(result.user);
       } else {
         setErrorMessage(result.error || 'Erro ao realizar cadastro.');
       }
-    }, 450);
+    } catch {
+      setIsLoading(false);
+      setErrorMessage('Erro ao realizar cadastro. Tente novamente.');
+    }
   };
 
   // Generate days array (1 to 31)

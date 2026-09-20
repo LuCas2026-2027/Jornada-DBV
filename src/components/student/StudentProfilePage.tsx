@@ -85,7 +85,7 @@ export function StudentProfilePage({ user, onUpdateUser }: StudentProfilePagePro
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
     setIsSaving(true);
@@ -97,7 +97,7 @@ export function StudentProfilePage({ user, onUpdateUser }: StudentProfilePagePro
       return;
     }
 
-    const result = updateStudentProfile({
+    const result = await updateStudentProfile({
       studentId: user.id,
       name,
       avatar,

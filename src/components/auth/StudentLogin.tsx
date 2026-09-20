@@ -16,7 +16,7 @@ export function StudentLogin({ onSuccess, onSwitchToRegister, onSwitchToDirector
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -30,15 +30,18 @@ export function StudentLogin({ onSuccess, onSwitchToRegister, onSwitchToDirector
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const result = loginStudent(email, password);
+    try {
+      const result = await loginStudent(email, password);
       setIsLoading(false);
       if (result.success && result.user) {
         onSuccess(result.user);
       } else {
         setErrorMessage(result.error || 'E-mail ou senha incorretos.');
       }
-    }, 400);
+    } catch {
+      setIsLoading(false);
+      setErrorMessage('Erro ao autenticar. Tente novamente.');
+    }
   };
 
   const handleFillDemoStudent = () => {

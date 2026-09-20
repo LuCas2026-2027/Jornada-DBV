@@ -3,15 +3,17 @@ import { StudentLogin } from './StudentLogin';
 import { StudentRegister } from './StudentRegister';
 import { DirectorLogin } from './DirectorLogin';
 import { User } from '../../types';
-import { GraduationCap, Shield } from 'lucide-react';
+import { GraduationCap, Shield, Database } from 'lucide-react';
+import { isSupabaseConfigured } from '../../lib/supabase';
 
 interface AuthPortalProps {
   onLoginSuccess: (user: User) => void;
+  onOpenSupabaseModal?: () => void;
 }
 
 export type AuthMode = 'STUDENT_LOGIN' | 'STUDENT_REGISTER' | 'DIRECTOR_LOGIN';
 
-export function AuthPortal({ onLoginSuccess }: AuthPortalProps) {
+export function AuthPortal({ onLoginSuccess, onOpenSupabaseModal }: AuthPortalProps) {
   const [authMode, setAuthMode] = useState<AuthMode>('STUDENT_LOGIN');
 
   return (
@@ -90,9 +92,23 @@ export function AuthPortal({ onLoginSuccess }: AuthPortalProps) {
         )}
       </div>
 
-      {/* Footer reassurance */}
-      <div className="mt-8 text-center text-xs text-slate-400">
-        Plataforma Escolar Segura &bull; Todos os direitos reservados
+      {/* Footer reassurance & Supabase status */}
+      <div className="mt-8 flex flex-col items-center justify-center gap-2 text-xs text-slate-400">
+        <div>Plataforma Escolar Segura &bull; Todos os direitos reservados</div>
+        {onOpenSupabaseModal && (
+          <button
+            type="button"
+            onClick={onOpenSupabaseModal}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium transition cursor-pointer border ${
+              isSupabaseConfigured()
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                : 'bg-white/80 text-slate-600 border-slate-200 hover:bg-white hover:text-slate-900'
+            }`}
+          >
+            <Database className="w-3 h-3 text-emerald-600" />
+            <span>{isSupabaseConfigured() ? 'Supabase Conectado' : 'Conectar ao Supabase (PostgreSQL)'}</span>
+          </button>
+        )}
       </div>
     </div>
   );
