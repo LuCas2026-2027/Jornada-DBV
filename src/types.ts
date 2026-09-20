@@ -77,6 +77,7 @@ export interface Question {
   options?: string[]; // Para Múltipla Escolha
   imageUrl?: string; // Questões com imagem
   correctAnswer?: string; // Para auto-avaliação / gabarito se aplicável
+  points?: number; // Valor da questão (ex: 2.5 pts)
 }
 
 export interface ActivitySubmission {
@@ -89,6 +90,7 @@ export interface ActivitySubmission {
   status: 'PENDENTE' | 'AVALIADO';
   grade?: number;
   feedback?: string;
+  questionScores?: Record<string, number>;
 }
 
 export interface StudentDraft {
@@ -101,6 +103,7 @@ export interface Activity {
   id: string;
   title: string;
   subject: string;
+  targetClass?: string; // Turma à qual a atividade se destina
   teacherName?: string;
   teacherAvatar?: string;
   coverImage?: string;
@@ -111,6 +114,31 @@ export interface Activity {
   questions?: Question[];
   submissions: Record<string, ActivitySubmission>; // studentId -> submission
   drafts?: Record<string, StudentDraft>; // studentId -> rascunho salvo automaticamente
+  isArchived?: boolean; // Permite arquivar atividade
+}
+
+export type NotificationType =
+  | 'ACTIVITY_NEW'
+  | 'ACTIVITY_DUE_SOON'
+  | 'ACTIVITY_GRADED'
+  | 'TEACHER_COMMENT'
+  | 'STUDENT_SUBMITTED'
+  | 'SUBMISSION_PENDING'
+  | 'STUDENT_COMPLETED'
+  | 'NOTICE_NEW';
+
+export interface AppNotification {
+  id: string;
+  recipientRole: 'DIRETOR' | 'ALUNO' | 'ALL';
+  recipientId?: string; // id do aluno ou vazio para todos daquela função
+  title: string;
+  message: string;
+  type: NotificationType;
+  createdAt: string;
+  read: boolean;
+  activityId?: string;
+  noticeId?: string;
+  studentId?: string;
 }
 
 export interface SchoolNotice {

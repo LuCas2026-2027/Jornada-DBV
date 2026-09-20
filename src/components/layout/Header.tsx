@@ -1,14 +1,36 @@
 import { useState, useRef, useEffect } from 'react';
-import { Search, Bell, X, Check, Calendar, LogOut, User as UserIcon, Award, ChevronDown } from 'lucide-react';
-import { User, SchoolNotice } from '../../types';
+import {
+  Search,
+  Bell,
+  X,
+  Check,
+  Calendar,
+  LogOut,
+  User as UserIcon,
+  Award,
+  ChevronDown,
+  CheckCircle2,
+  Clock,
+  Sparkles,
+  BookOpen,
+  MessageSquare,
+  AlertTriangle,
+  Send,
+  HelpCircle,
+} from 'lucide-react';
+import { User, SchoolNotice, AppNotification } from '../../types';
 
 interface HeaderProps {
   user: User;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   notices: SchoolNotice[];
+  notifications?: AppNotification[];
   onOpenProfile?: () => void;
   onSelectNotice?: (notice: SchoolNotice) => void;
+  onSelectNotification?: (notification: AppNotification) => void;
+  onMarkNotificationAsRead?: (notifId: string) => void;
+  onMarkAllNotificationsAsRead?: () => void;
   onLogout?: () => void;
 }
 
@@ -17,15 +39,54 @@ export function Header({
   searchQuery,
   onSearchChange,
   notices,
+  notifications = [],
   onOpenProfile,
   onSelectNotice,
+  onSelectNotification,
+  onMarkNotificationAsRead,
+  onMarkAllNotificationsAsRead,
   onLogout,
 }: HeaderProps) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [activeNotifTab, setActiveNotifTab] = useState<'NOTIFS' | 'NOTICES'>('NOTIFS');
 
   const isDirector = user.role === 'DIRETOR';
   const subtitle = isDirector ? 'Direção Pedagógica' : user.grade || 'Desbravador - Guerreiros Da Serra';
+
+  // Filter notifications relevant to current user
+  const userNotifications = notifications.filter((n) => {
+    if (n.recipientRole === 'ALL') return true;
+    if (n.recipientRole === user.role) {
+      if (n.recipientId) return n.recipientId === user.id;
+      return true;
+    }
+    return false;
+  });
+
+  const unreadNotificationsCount = userNotifications.filter((n) => !n.read).length;
+  const totalAlertsCount = unreadNotificationsCount + (notices.length > 0 ? 1 : 0);
+
+  const getNotifIcon = (type: string) => {
+    switch (type) {
+      case 'NEW_ACTIVITY':
+        return <Sparkles className="w-4 h-4 text-purple-600" />;
+      case 'DUE_SOON':
+        return <Clock className="w-4 h-4 text-amber-600" />;
+      case 'ACTIVITY_GRADED':
+        return <Award className="w-4 h-4 text-emerald-600" />;
+      case 'TEACHER_FEEDBACK':
+        return <MessageSquare className="w-4 h-4 text-indigo-600" />;
+      case 'SUBMISSION_RECEIVED':
+        return <Send className="w-4 h-4 text-purple-600" />;
+      case 'PENDING_CORRECTION':
+        return <AlertTriangle className="w-4 h-4 text-amber-600" />;
+      case 'ACTIVITY_COMPLETED':
+        return <CheckCircle2 className="w-4 h-4 text-emerald-600" />;
+      default:
+        return <Bell className="w-4 h-4 text-purple-600" />;
+    }
+  };
 
   return (
     <header id="app-header" className="w-full flex items-center justify-between gap-4 mb-6 relative">
@@ -37,7 +98,7 @@ export function Header({
             id="global-search-input"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Pesquisar..."
+            placeholder="Pesquisar atividades, disciplinas, comunicados..."
             className="w-full pl-6 pr-10 py-2.5 bg-white rounded-full text-xs sm:text-sm text-slate-800 placeholder-slate-400 shadow-sm border border-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300 transition"
           />
           <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
@@ -64,7 +125,11 @@ export function Header({
             <div className="hidden sm:block text-left">
               <div className="text-xs sm:text-sm font-bold text-slate-900 leading-tight flex items-center gap-1">
                 <span>{user.name}</span>
-                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+                    showUserMenu ? 'rotate-180' : ''
+                  }`}
+                />
               </div>
               <div className="text-[11px] text-slate-400 font-medium leading-none mt-0.5">
                 {subtitle}
@@ -76,7 +141,7 @@ export function Header({
           {showUserMenu && (
             <div
               id="header-user-dropdown-menu"
-              className="absolute right-0 mt-2 w-56 bg-white rounded-3xl shadow-xl border border-purple-100 p-2 z-50 animate-in fade-in slide-in-from-top-2"
+              className="absolute right-0 mt-2 w-56 bg-white rounded-3xl shadow-xl border border-purple-100 p-2 z-50 animate-scaleUp"
             >
               <div className="px-3 py-2 border-b border-slate-100 mb-1">
                 <span className="text-xs font-bold text-slate-900 block truncate">{user.name}</span>
@@ -117,7 +182,7 @@ export function Header({
           )}
         </div>
 
-        {/* Notification Bell with red unread dot */}
+        {/* Notification Bell with unread counter */}
         <div className="relative">
           <button
             type="button"
@@ -127,58 +192,151 @@ export function Header({
             title="Notificações e Avisos"
           >
             <Bell className="w-4 h-4" />
-            {notices.length > 0 && (
-              <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white animate-pulse" />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white text-[10px] font-black rounded-full ring-2 ring-white flex items-center justify-center animate-pulse">
+                {unreadNotificationsCount}
+              </span>
             )}
           </button>
 
-          {/* Notifications Dropdown */}
+          {/* Notifications Dropdown (Item 12: Notificações do Aluno e Diretor) */}
           {showNotifications && (
             <div
               id="notifications-dropdown-menu"
-              className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-3xl shadow-2xl border border-purple-100 p-4 z-50 animate-in fade-in slide-in-from-top-2"
+              className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-3xl shadow-2xl border border-purple-100 p-4 z-50 animate-scaleUp"
             >
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-sm text-slate-900">Avisos e Comunicados</span>
-                  <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                    {notices.length}
-                  </span>
+                  <span className="font-bold text-sm text-slate-900">Notificações da Escola</span>
+                  {unreadNotificationsCount > 0 && (
+                    <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      {unreadNotificationsCount} nova(s)
+                    </span>
+                  )}
                 </div>
+                <div className="flex items-center gap-2">
+                  {unreadNotificationsCount > 0 && onMarkAllNotificationsAsRead && (
+                    <button
+                      type="button"
+                      onClick={onMarkAllNotificationsAsRead}
+                      className="text-[11px] text-purple-700 font-bold hover:underline"
+                    >
+                      Ler todas
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowNotifications(false)}
+                    className="text-slate-400 hover:text-slate-600 p-1 rounded-full cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Toggle Notificações vs Comunicados */}
+              <div className="flex p-1 bg-slate-100 rounded-xl mb-3">
                 <button
                   type="button"
-                  onClick={() => setShowNotifications(false)}
-                  className="text-slate-400 hover:text-slate-600 p-1 rounded-full cursor-pointer"
+                  onClick={() => setActiveNotifTab('NOTIFS')}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition ${
+                    activeNotifTab === 'NOTIFS'
+                      ? 'bg-white text-purple-800 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
                 >
-                  <X className="w-4 h-4" />
+                  Alertas ({userNotifications.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveNotifTab('NOTICES')}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition ${
+                    activeNotifTab === 'NOTICES'
+                      ? 'bg-white text-purple-800 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Mural Escolar ({notices.length})
                 </button>
               </div>
 
-              <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                {notices.length === 0 ? (
-                  <div className="text-center py-6 text-xs text-slate-400">
-                    Nenhum aviso novo no momento.
-                  </div>
-                ) : (
-                  notices.map((notice) => (
-                    <div
-                      key={notice.id}
-                      onClick={() => {
-                        if (onSelectNotice) onSelectNotice(notice);
-                        setShowNotifications(false);
-                      }}
-                      className="p-3 bg-slate-50 hover:bg-purple-50/70 rounded-2xl border border-slate-100 transition cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between text-[11px] mb-1">
-                        <span className="font-semibold text-purple-700">{notice.category}</span>
-                        <span className="text-slate-400">{notice.publishDate}</span>
-                      </div>
-                      <h4 className="text-xs font-bold text-slate-800 line-clamp-1">{notice.title}</h4>
-                      <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{notice.content}</p>
+              {/* Feed: Notificações Acadêmicas (Item 12) */}
+              {activeNotifTab === 'NOTIFS' && (
+                <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                  {userNotifications.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-slate-400">
+                      Nenhuma notificação nova no momento.
                     </div>
-                  ))
-                )}
-              </div>
+                  ) : (
+                    userNotifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        onClick={() => {
+                          if (onMarkNotificationAsRead) onMarkNotificationAsRead(notif.id);
+                          if (onSelectNotification) onSelectNotification(notif);
+                        }}
+                        className={`p-3 rounded-2xl border transition cursor-pointer flex items-start gap-3 ${
+                          notif.read
+                            ? 'bg-white border-slate-100 hover:bg-slate-50 opacity-80'
+                            : 'bg-purple-50/70 border-purple-200 hover:bg-purple-50'
+                        }`}
+                      >
+                        <div className="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center shrink-0 mt-0.5 border border-purple-100">
+                          {getNotifIcon(notif.type)}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1 mb-0.5">
+                            <h4 className="text-xs font-bold text-slate-900 truncate">
+                              {notif.title}
+                            </h4>
+                            {!notif.read && (
+                              <span className="w-2 h-2 rounded-full bg-purple-600 shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-600 leading-snug">{notif.message}</p>
+                          <span className="text-[10px] text-slate-400 block mt-1">
+                            {new Date(notif.createdAt).toLocaleDateString('pt-BR')} às{' '}
+                            {new Date(notif.createdAt).toLocaleTimeString('pt-BR', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Feed: Comunicados / Mural */}
+              {activeNotifTab === 'NOTICES' && (
+                <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                  {notices.length === 0 ? (
+                    <div className="text-center py-8 text-xs text-slate-400">
+                      Nenhum comunicado no mural.
+                    </div>
+                  ) : (
+                    notices.map((notice) => (
+                      <div
+                        key={notice.id}
+                        onClick={() => {
+                          if (onSelectNotice) onSelectNotice(notice);
+                          setShowNotifications(false);
+                        }}
+                        className="p-3 bg-slate-50 hover:bg-purple-50/70 rounded-2xl border border-slate-100 transition cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between text-[11px] mb-1">
+                          <span className="font-semibold text-purple-700">{notice.category}</span>
+                          <span className="text-slate-400">{notice.publishDate}</span>
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-800 line-clamp-1">{notice.title}</h4>
+                        <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">{notice.content}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

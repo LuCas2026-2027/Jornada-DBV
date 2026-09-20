@@ -1,4 +1,4 @@
-import { User, Activity, SchoolNotice, Course, Teacher, ScheduleClass } from '../types';
+import { User, Activity, SchoolNotice, Course, Teacher, ScheduleClass, AppNotification } from '../types';
 import {
   DEFAULT_DIRECTOR,
   INITIAL_STUDENTS,
@@ -6,7 +6,8 @@ import {
   INITIAL_ACTIVITIES,
   INITIAL_NOTICES,
   INITIAL_TEACHERS,
-  INITIAL_SCHEDULE
+  INITIAL_SCHEDULE,
+  INITIAL_NOTIFICATIONS,
 } from '../data/mockData';
 
 const SESSION_KEY = 'escola_current_session';
@@ -14,6 +15,7 @@ const STUDENTS_KEY = 'escola_registered_students';
 const ACTIVITIES_KEY = 'escola_activities';
 const NOTICES_KEY = 'escola_notices';
 const COURSES_KEY = 'escola_courses';
+const NOTIFICATIONS_KEY = 'escola_notifications';
 
 export interface StorageState {
   currentUser: User | null;
@@ -23,6 +25,7 @@ export interface StorageState {
   courses: Course[];
   teachers: Teacher[];
   schedule: ScheduleClass[];
+  notifications: AppNotification[];
 }
 
 // Inicializa dados no localStorage se vazios
@@ -44,13 +47,20 @@ export function getInitialState(): StorageState {
     }));
 
     const storedActivities = localStorage.getItem(ACTIVITIES_KEY);
-    const activities: Activity[] = storedActivities ? JSON.parse(storedActivities) : INITIAL_ACTIVITIES;
+    let activities: Activity[] = storedActivities ? JSON.parse(storedActivities) : INITIAL_ACTIVITIES;
+    // ensure mock activities have initial pending submissions if freshly loaded
+    if (!storedActivities) {
+      activities = INITIAL_ACTIVITIES;
+    }
 
     const storedNotices = localStorage.getItem(NOTICES_KEY);
     const notices: SchoolNotice[] = storedNotices ? JSON.parse(storedNotices) : INITIAL_NOTICES;
 
     const storedCourses = localStorage.getItem(COURSES_KEY);
     const courses: Course[] = storedCourses ? JSON.parse(storedCourses) : INITIAL_COURSES;
+
+    const storedNotifications = localStorage.getItem(NOTIFICATIONS_KEY);
+    const notifications: AppNotification[] = storedNotifications ? JSON.parse(storedNotifications) : INITIAL_NOTIFICATIONS;
 
     return {
       currentUser,
@@ -60,6 +70,7 @@ export function getInitialState(): StorageState {
       courses,
       teachers: INITIAL_TEACHERS,
       schedule: INITIAL_SCHEDULE,
+      notifications,
     };
   } catch (error) {
     console.error('Falha ao ler dados locais:', error);
@@ -71,7 +82,17 @@ export function getInitialState(): StorageState {
       courses: INITIAL_COURSES,
       teachers: INITIAL_TEACHERS,
       schedule: INITIAL_SCHEDULE,
+      notifications: INITIAL_NOTIFICATIONS,
     };
+  }
+}
+
+// Salva notificações
+export function persistNotifications(notifications: AppNotification[]): void {
+  try {
+    localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  } catch (e) {
+    console.error('Erro ao salvar notificações:', e);
   }
 }
 
@@ -305,6 +326,117 @@ export function validateAndRegisterStudent(data: RegisterStudentData): { success
     grade: newStudentWithPass.grade,
     registrationNumber: newStudentWithPass.registrationNumber,
     createdAt: newStudentWithPass.createdAt,
+  };
+
+  persistSession(cleanUser);
+  return { success: true, user: cleanUser };
+}
+
+export interface UpdateStudentProfileData {
+  studentId: string;
+  name?: string;
+  avatar?: string;
+  birthDay?: number;
+  birthMonth?: number;
+  birthYear?: number;
+  // Alteração de senha
+  currentPasswordForPasswordChange?: string;
+  newPassword?: string;
+  // Alteração segura de e-mail (Gmail)
+  newEmail?: string;
+  currentPasswordForEmailChange?: string;
+}
+
+export function updateStudentProfile(data: UpdateStudentProfileData): {
+  success: boolean;
+  user?: User;
+  error?: string;
+} {
+  const currentState = getInitialState();
+  const studentIndex = currentState.students.findIndex((s) => s.id === data.studentId);
+
+  if (studentIndex === -1) {
+    return { success: false, error: 'Aluno não encontrado no sistema.' };
+  }
+
+  const student = currentState.students[studentIndex];
+  let updatedPass = student.passwordHash;
+  let updatedEmail = student.email;
+
+  // 1. Verificação segura para troca de senha
+  if (data.newPassword && data.newPassword.trim() !== '') {
+    if (!data.currentPasswordForPasswordChange) {
+      return { success: false, error: 'Para alterar a senha, informe sua senha atual.' };
+    }
+    if (data.currentPasswordForPasswordChange !== student.passwordHash) {
+      return { success: false, error: 'A senha atual informada para troca de senha está incorreta.' };
+    }
+    if (data.newPassword.length < 6) {
+      return { success: false, error: 'A nova senha deve possuir no mínimo 6 caracteres.' };
+    }
+    updatedPass = data.newPassword;
+  }
+
+  // 2. Verificação com controle de alteração seguro para Gmail / e-mail
+  if (data.newEmail && data.newEmail.trim().toLowerCase() !== student.email.toLowerCase()) {
+    const cleanNewEmail = data.newEmail.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanNewEmail)) {
+      return { success: false, error: 'O novo endereço de e-mail informado é inválido.' };
+    }
+
+    if (!data.currentPasswordForEmailChange) {
+      return {
+        success: false,
+        error: 'Por motivos de segurança, informe sua senha atual para autorizar a alteração do e-mail.',
+      };
+    }
+
+    if (data.currentPasswordForEmailChange !== student.passwordHash) {
+      return {
+        success: false,
+        error: 'Senha de segurança incorreta. Não foi possível autorizar a troca do e-mail.',
+      };
+    }
+
+    const emailTaken = currentState.students.some(
+      (s) => s.id !== student.id && s.email.toLowerCase() === cleanNewEmail
+    );
+    if (emailTaken || cleanNewEmail === DEFAULT_DIRECTOR.email.toLowerCase()) {
+      return { success: false, error: 'Este endereço de e-mail já pertence a outra conta cadastrada.' };
+    }
+
+    updatedEmail = cleanNewEmail;
+  }
+
+  // 3. Monta aluno atualizado
+  const updatedStudent = {
+    ...student,
+    name: data.name?.trim() || student.name,
+    avatar: data.avatar || student.avatar,
+    email: updatedEmail,
+    passwordHash: updatedPass,
+    birthDate: {
+      day: data.birthDay ?? (student.birthDate?.day ?? 15),
+      month: data.birthMonth ?? (student.birthDate?.month ?? 5),
+      year: data.birthYear ?? (student.birthDate?.year ?? 2008),
+    },
+  };
+
+  const updatedStudents = [...currentState.students];
+  updatedStudents[studentIndex] = updatedStudent;
+  persistStudents(updatedStudents);
+
+  const cleanUser: User = {
+    id: updatedStudent.id,
+    role: 'ALUNO',
+    name: updatedStudent.name,
+    email: updatedStudent.email,
+    avatar: updatedStudent.avatar,
+    birthDate: updatedStudent.birthDate,
+    grade: updatedStudent.grade,
+    registrationNumber: updatedStudent.registrationNumber,
+    createdAt: updatedStudent.createdAt,
   };
 
   persistSession(cleanUser);

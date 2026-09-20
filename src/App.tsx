@@ -6,10 +6,11 @@ import {
   persistNotices,
   persistCourses,
   persistStudents,
+  persistNotifications,
   saveActivityDraft,
   StorageState,
 } from './services/storage';
-import { User, Activity, SchoolNotice, Course, Teacher } from './types';
+import { User, Activity, SchoolNotice, Course, Teacher, AppNotification } from './types';
 import { AuthPortal } from './components/auth/AuthPortal';
 import { Sidebar, StudentTab, DirectorTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -22,6 +23,7 @@ import { NoticesView } from './components/student/NoticesView';
 import { ScheduleView } from './components/student/ScheduleView';
 import { StudentAnswersView } from './components/student/StudentAnswersView';
 import { StudentResultsView } from './components/student/StudentResultsView';
+import { StudentProfilePage } from './components/student/StudentProfilePage';
 import { DirectorDashboard } from './components/director/DirectorDashboard';
 import { ProfileModal } from './components/student/ProfileModal';
 import { TeacherContactModal } from './components/student/TeacherContactModal';
@@ -37,7 +39,7 @@ export default function App() {
   const [showProfileModal, setShowProfileModal] = useState(false);
 
   // Sync state changes with localStorage
-  const { currentUser, students, activities, notices, courses, teachers, schedule } = appState;
+  const { currentUser, students, activities, notices, courses, teachers, schedule, notifications = [] } = appState;
 
   useEffect(() => {
     // When director logs in, default tab is director dashboard
@@ -210,15 +212,89 @@ export default function App() {
     }));
   };
 
+  // User Profile Updates
+  const handleUpdateUser = (updatedUser: User) => {
+    const updatedStudents = students.map((s) =>
+      s.id === updatedUser.id ? { ...s, ...updatedUser } : s
+    );
+    persistStudents(updatedStudents);
+    setAppState((prev) => ({
+      ...prev,
+      currentUser: updatedUser,
+      students: updatedStudents,
+    }));
+  };
+
+  // Notification Handlers
+  const handleMarkNotificationAsRead = (notifId: string) => {
+    const updated = (notifications || []).map((n) =>
+      n.id === notifId ? { ...n, read: true } : n
+    );
+    persistNotifications(updated);
+    setAppState((prev) => ({ ...prev, notifications: updated }));
+  };
+
+  const handleMarkAllNotificationsAsRead = () => {
+    const updated = (notifications || []).map((n) => ({ ...n, read: true }));
+    persistNotifications(updated);
+    setAppState((prev) => ({ ...prev, notifications: updated }));
+  };
+
+  const handleSelectNotification = (notif: AppNotification) => {
+    handleMarkNotificationAsRead(notif.id);
+    if (notif.activityId) {
+      setSelectedActivityId(notif.activityId);
+      setActiveTab('ACTIVITIES');
+    } else if (notif.noticeId) {
+      setSelectedNoticeId(notif.noticeId);
+      setActiveTab('NOTICES');
+    }
+  };
+
   // Director Actions
-  const handleCreateActivity = (newActData: Omit<Activity, 'id' | 'submissions'>) => {
+  const handleCreateActivity = (newActData: Activity) => {
     const newActivity: Activity = {
       ...newActData,
-      id: `act-${Date.now()}`,
-      submissions: {},
+      id: newActData.id || `act-${Date.now()}`,
+      submissions: newActData.submissions || {},
     };
 
     const updated = [newActivity, ...activities];
+    persistActivities(updated);
+    setAppState((prev) => ({ ...prev, activities: updated }));
+  };
+
+  const handleUpdateActivity = (updatedActivity: Activity) => {
+    const updated = activities.map((a) => (a.id === updatedActivity.id ? updatedActivity : a));
+    persistActivities(updated);
+    setAppState((prev) => ({ ...prev, activities: updated }));
+  };
+
+  const handleDeleteActivity = (activityId: string) => {
+    const updated = activities.filter((a) => a.id !== activityId);
+    persistActivities(updated);
+    setAppState((prev) => ({ ...prev, activities: updated }));
+  };
+
+  const handleDuplicateActivity = (activityId: string) => {
+    const original = activities.find((a) => a.id === activityId);
+    if (!original) return;
+    const duplicated: Activity = {
+      ...original,
+      id: `act-${Date.now()}`,
+      title: `${original.title} (Cópia)`,
+      submissions: {},
+      isArchived: false,
+    };
+    const updated = [duplicated, ...activities];
+    persistActivities(updated);
+    setAppState((prev) => ({ ...prev, activities: updated }));
+  };
+
+  const handleToggleArchiveActivity = (activityId: string) => {
+    const updated = activities.map((a) =>
+      a.id === activityId ? { ...a, isArchived: !a.isArchived } : a
+    );
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
   };
@@ -227,7 +303,8 @@ export default function App() {
     activityId: string,
     studentId: string,
     grade: number,
-    feedback: string
+    feedback: string,
+    questionScores?: Record<string, number>
   ) => {
     const updatedActivities = activities.map((act) => {
       if (act.id === activityId && act.submissions[studentId]) {
@@ -240,6 +317,7 @@ export default function App() {
               status: 'AVALIADO' as const,
               grade,
               feedback,
+              questionScores: questionScores || act.submissions[studentId].questionScores,
             },
           },
         };
@@ -247,8 +325,28 @@ export default function App() {
       return act;
     });
 
+    const act = activities.find((a) => a.id === activityId);
+    const newNotif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      title: 'Atividade Avaliada!',
+      message: `Sua atividade "${act?.title || 'Atividade'}" foi avaliada com nota ${grade}/${act?.maxScore || 10}.`,
+      createdAt: new Date().toISOString(),
+      type: 'ACTIVITY_GRADED',
+      read: false,
+      recipientRole: 'ALUNO',
+      recipientId: studentId,
+      activityId,
+      studentId,
+    };
+    const updatedNotifications = [newNotif, ...(notifications || [])];
+    persistNotifications(updatedNotifications);
+
     persistActivities(updatedActivities);
-    setAppState((prev) => ({ ...prev, activities: updatedActivities }));
+    setAppState((prev) => ({
+      ...prev,
+      activities: updatedActivities,
+      notifications: updatedNotifications,
+    }));
   };
 
   const handleCreateNotice = (newNoticeData: Omit<SchoolNotice, 'id' | 'publishDate'>) => {
@@ -322,11 +420,15 @@ export default function App() {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             notices={notices}
-            onOpenProfile={() => setShowProfileModal(true)}
+            notifications={notifications}
+            onOpenProfile={() => setActiveTab('PROFILE')}
             onSelectNotice={(notice) => {
               setSelectedNoticeId(notice.id);
               setActiveTab('NOTICES');
             }}
+            onSelectNotification={handleSelectNotification}
+            onMarkNotificationAsRead={handleMarkNotificationAsRead}
+            onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
             onLogout={handleLogout}
           />
 
@@ -361,6 +463,10 @@ export default function App() {
               activeDirectorTab={activeTab}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onCreateActivity={handleCreateActivity}
+              onUpdateActivity={handleUpdateActivity}
+              onDeleteActivity={handleDeleteActivity}
+              onDuplicateActivity={handleDuplicateActivity}
+              onToggleArchiveActivity={handleToggleArchiveActivity}
               onGradeSubmission={handleGradeSubmission}
               onCreateNotice={handleCreateNotice}
               onDeleteNotice={handleDeleteNotice}
@@ -430,39 +536,10 @@ export default function App() {
               )}
 
               {activeTab === 'PROFILE' && (
-                <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-100 shadow-sm max-w-2xl mx-auto space-y-6">
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={currentUser.avatar}
-                      alt={currentUser.name}
-                      className="w-16 h-16 rounded-full object-cover border-2 border-purple-300"
-                    />
-                    <div>
-                      <h2 className="text-xl font-extrabold text-slate-900">{currentUser.name}</h2>
-                      <span className="text-xs font-semibold text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-full inline-block mt-0.5">
-                        {currentUser.grade || 'Desbravador - Guerreiros Da Serra'}
-                      </span>
-                      <p className="text-xs text-slate-500 mt-1">{currentUser.email}</p>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-slate-100 pt-4 flex flex-col sm:flex-row gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setShowProfileModal(true)}
-                      className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md shadow-purple-600/20 transition cursor-pointer"
-                    >
-                      Alterar Foto de Perfil
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleLogout}
-                      className="px-6 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-2xl text-xs sm:text-sm font-bold transition cursor-pointer"
-                    >
-                      Sair da Conta
-                    </button>
-                  </div>
-                </div>
+                <StudentProfilePage
+                  user={currentUser}
+                  onUpdateUser={handleUpdateUser}
+                />
               )}
 
               {activeTab === 'COURSES' && (

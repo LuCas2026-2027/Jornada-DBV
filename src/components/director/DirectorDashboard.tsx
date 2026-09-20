@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { User, Activity, SchoolNotice } from '../../types';
+import { User, Activity, SchoolNotice, ActivitySubmission } from '../../types';
 import {
   Users,
   CheckSquare,
   Bell,
   PlusCircle,
+  Plus,
   Award,
   Calendar,
   AlertCircle,
@@ -23,8 +24,14 @@ import {
   AlertTriangle,
   HelpCircle,
   X,
-  FileText
+  FileText,
+  Edit,
+  Copy,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
+import { ActivityFormModal } from './ActivityFormModal';
+import { SubmissionReviewModal } from './SubmissionReviewModal';
 
 interface DirectorDashboardProps {
   director: User;
@@ -33,8 +40,18 @@ interface DirectorDashboardProps {
   notices: SchoolNotice[];
   activeDirectorTab: string;
   onNavigateTab: (tab: string) => void;
-  onCreateActivity: (newActivity: Omit<Activity, 'id' | 'submissions'>) => void;
-  onGradeSubmission: (activityId: string, studentId: string, grade: number, feedback: string) => void;
+  onCreateActivity: (newActivity: Activity) => void;
+  onUpdateActivity?: (updatedActivity: Activity) => void;
+  onDeleteActivity?: (activityId: string) => void;
+  onDuplicateActivity?: (activityId: string) => void;
+  onToggleArchiveActivity?: (activityId: string) => void;
+  onGradeSubmission: (
+    activityId: string,
+    studentId: string,
+    grade: number,
+    feedback: string,
+    questionScores?: Record<string, number>
+  ) => void;
   onCreateNotice: (newNotice: Omit<SchoolNotice, 'id' | 'publishDate'>) => void;
   onDeleteNotice: (noticeId: string) => void;
 }
@@ -47,6 +64,10 @@ export function DirectorDashboard({
   activeDirectorTab,
   onNavigateTab,
   onCreateActivity,
+  onUpdateActivity,
+  onDeleteActivity,
+  onDuplicateActivity,
+  onToggleArchiveActivity,
   onGradeSubmission,
   onCreateNotice,
   onDeleteNotice,
@@ -54,6 +75,70 @@ export function DirectorDashboard({
   // Filters & State
   const [studentSearch, setStudentSearch] = useState('');
   const [monitorStatusFilter, setMonitorStatusFilter] = useState<'ALL' | 'ONLINE' | 'RESPONDENDO' | 'OFFLINE'>('ALL');
+
+  // Activity Management State (Item 9)
+  const [showActivityModal, setShowActivityModal] = useState(false);
+  const [activityToEdit, setActivityToEdit] = useState<Activity | null>(null);
+  const [activityFilter, setActivityFilter] = useState<'ALL' | 'ACTIVE' | 'ARCHIVED'>('ALL');
+
+  // Submission Review State (Item 10)
+  const [selectedSubmissionForReview, setSelectedSubmissionForReview] = useState<{
+    activity: Activity;
+    submission: ActivitySubmission;
+  } | null>(null);
+
+  // Helper actions for activities
+  const handleDuplicate = (actId: string) => {
+    if (onDuplicateActivity) {
+      onDuplicateActivity(actId);
+    } else {
+      const act = activities.find((a) => a.id === actId);
+      if (!act) return;
+      const duplicated: Activity = {
+        ...act,
+        id: `act-${Date.now()}`,
+        title: `${act.title} (Cópia)`,
+        submissions: {},
+        drafts: {},
+      };
+      onCreateActivity(duplicated);
+    }
+  };
+
+  const handleToggleArchive = (actId: string) => {
+    if (onToggleArchiveActivity) {
+      onToggleArchiveActivity(actId);
+    } else if (onUpdateActivity) {
+      const act = activities.find((a) => a.id === actId);
+      if (act) {
+        onUpdateActivity({ ...act, isArchived: !act.isArchived });
+      }
+    }
+  };
+
+  const handleDelete = (actId: string) => {
+    if (
+      window.confirm(
+        'Tem certeza que deseja excluir esta atividade? Esta ação não pode ser desfeita.'
+      )
+    ) {
+      if (onDeleteActivity) {
+        onDeleteActivity(actId);
+      }
+    }
+  };
+
+  const handleOpenSubmissionReview = (activityId: string, studentId: string) => {
+    const act = activities.find((a) => a.id === activityId);
+    if (!act) return;
+    const sub = act.submissions[studentId];
+    if (!sub) return;
+
+    setSelectedSubmissionForReview({
+      activity: act,
+      submission: sub,
+    });
+  };
   
   // Confidentiality Modal State
   const [blockedPrivacyModalData, setBlockedPrivacyModalData] = useState<{
@@ -160,12 +245,14 @@ export function DirectorDashboard({
       .filter((line) => line.length > 0);
 
     onCreateActivity({
+      id: `act-${Date.now()}`,
       title: newActTitle.trim(),
       subject: newActSubject,
       dueDate: newActDueDate,
       maxScore: Number(newActScore) || 10,
       description: newActDesc.trim(),
       instructions: instructionsArray.length > 0 ? instructionsArray : ['Siga os critérios explicados em sala.'],
+      submissions: {},
     });
 
     setActSuccessMsg('Atividade cadastrada e disponibilizada para os alunos!');
@@ -685,172 +772,222 @@ export function DirectorDashboard({
       )}
 
       {/* ==================================================
-          SECTION: ATIVIDADES (DIR_ACTIVITIES)
+          SECTION: ATIVIDADES DO DIRETOR (DIR_ACTIVITIES)
           ================================================== */}
       {activeDirectorTab === 'DIR_ACTIVITIES' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Create Activity Form (1/3) */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+        <div className="space-y-6">
+          {/* Top Bar with + Nova Atividade Button */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h3 className="text-base font-extrabold text-slate-900">Criar Nova Atividade</h3>
-              <p className="text-xs text-slate-500">
-                Disponibilize exercícios e tarefas com prazo e pontuação máxima.
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-100">
+                  Gerenciador Pedagógico
+                </span>
+                <span className="text-xs text-slate-400">&bull;</span>
+                <span className="text-xs text-slate-500 font-medium">
+                  {activities.length} atividade(s) cadastradas
+                </span>
+              </div>
+              <h3 className="text-lg font-extrabold text-slate-900">
+                Área de Atividades do Diretor
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Crie novas tarefas com questões personalizadas, edite, duplique, arquive ou exclua.
               </p>
             </div>
 
-            {actSuccessMsg && (
-              <div className="p-3 bg-emerald-50 text-emerald-700 text-xs rounded-2xl border border-emerald-200 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>{actSuccessMsg}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateActivitySubmit} className="space-y-3">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase">
-                  Título da Atividade *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newActTitle}
-                  onChange={(e) => setNewActTitle(e.target.value)}
-                  placeholder="Ex: Trabalho Prático de Recursão"
-                  className="w-full mt-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-purple-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase">
-                  Disciplina *
-                </label>
-                <select
-                  value={newActSubject}
-                  onChange={(e) => setNewActSubject(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-purple-600"
-                >
-                  <option value="Programação Orientada a Objetos">Programação Orientada a Objetos</option>
-                  <option value="Fundamentos de Banco de Dados">Fundamentos de Banco de Dados</option>
-                  <option value="Física Aplicada e Termodinâmica">Física Aplicada e Termodinâmica</option>
-                  <option value="Matemática e Estatística">Matemática e Estatística</option>
-                  <option value="Educação e Meio Ambiente">Educação e Meio Ambiente</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase">
-                    Data de Entrega *
-                  </label>
-                  <input
-                    type="datetime-local"
-                    required
-                    value={newActDueDate}
-                    onChange={(e) => setNewActDueDate(e.target.value)}
-                    className="w-full mt-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-purple-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase">
-                    Nota Máxima *
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={newActScore}
-                    onChange={(e) => setNewActScore(Number(e.target.value))}
-                    className="w-full mt-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-purple-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase">
-                  Descrição do Exercício *
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  value={newActDesc}
-                  onChange={(e) => setNewActDesc(e.target.value)}
-                  placeholder="Explique o que os alunos devem desenvolver..."
-                  className="w-full mt-1 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-purple-600 resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase">
-                  Instruções Passo a Passo (1 por linha)
-                </label>
-                <textarea
-                  rows={3}
-                  value={newActInstructions}
-                  onChange={(e) => setNewActInstructions(e.target.value)}
-                  placeholder="Passo 1...&#10;Passo 2...&#10;Critério de avaliação..."
-                  className="w-full mt-1 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-purple-600 resize-none"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-xl text-xs shadow-md shadow-purple-600/20 transition cursor-pointer"
-              >
-                Publicar Atividade no Catálogo
-              </button>
-            </form>
+            <button
+              type="button"
+              id="director-create-new-activity-btn"
+              onClick={() => {
+                setActivityToEdit(null);
+                setShowActivityModal(true);
+              }}
+              className="px-6 py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold text-xs sm:text-sm shadow-md shadow-purple-600/25 transition flex items-center gap-2 cursor-pointer self-start sm:self-auto shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Nova atividade</span>
+            </button>
           </div>
 
-          {/* List of Existing Activities and Submissions (2/3) */}
-          <div className="lg:col-span-2 space-y-4">
-            <h3 className="text-base font-extrabold text-slate-900">
-              Catálogo de Atividades Registradas ({activities.length})
-            </h3>
+          {/* Activity Filters Tab */}
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-2xl w-fit">
+            <button
+              type="button"
+              onClick={() => setActivityFilter('ALL')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activityFilter === 'ALL'
+                  ? 'bg-white text-purple-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Todas ({activities.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivityFilter('ACTIVE')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activityFilter === 'ACTIVE'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Ativas ({activities.filter((a) => !a.isArchived).length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivityFilter('ARCHIVED')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activityFilter === 'ARCHIVED'
+                  ? 'bg-white text-slate-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Arquivadas ({activities.filter((a) => a.isArchived).length})
+            </button>
+          </div>
 
-            <div className="space-y-4">
-              {activities.map((act) => {
-                const submissionList = Object.entries(act.submissions);
+          {/* Activities Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {activities
+              .filter((a) => {
+                if (activityFilter === 'ACTIVE') return !a.isArchived;
+                if (activityFilter === 'ARCHIVED') return a.isArchived;
+                return true;
+              })
+              .map((act) => {
+                const submissionsCount = Object.keys(act.submissions || {}).length;
+                const questionsCount = act.questions?.length || 1;
+                const dueDateFormatted = act.dueDate
+                  ? new Date(act.dueDate).toLocaleDateString('pt-BR')
+                  : 'Sem prazo';
 
                 return (
                   <div
                     key={act.id}
-                    className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm space-y-3"
+                    className={`bg-white rounded-3xl border transition shadow-sm overflow-hidden flex flex-col justify-between ${
+                      act.isArchived
+                        ? 'border-slate-200 opacity-75'
+                        : 'border-slate-100 hover:border-purple-200'
+                    }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-full">
-                          {act.subject}
-                        </span>
-                        <h4 className="text-sm font-bold text-slate-900 mt-1">
-                          {act.title}
-                        </h4>
-                        <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
-                          {act.description}
-                        </p>
+                    <div>
+                      {/* Cover Thumbnail */}
+                      <div className="h-40 w-full relative bg-slate-100 overflow-hidden">
+                        <img
+                          src={act.coverImage || 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=800&auto=format&fit=crop&q=80'}
+                          alt={act.title}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/80 via-transparent to-black/20" />
+                        
+                        <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-white bg-purple-600/90 backdrop-blur-md px-2.5 py-1 rounded-full shadow-sm">
+                            {act.subject}
+                          </span>
+                          {act.isArchived && (
+                            <span className="text-[10px] font-bold text-slate-800 bg-amber-400 px-2.5 py-1 rounded-full shadow-sm">
+                              Arquivada
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="absolute bottom-2.5 left-3 right-3 text-white">
+                          <span className="text-[11px] text-purple-200 block font-medium truncate">
+                            Turma: {act.targetClass || 'Desbravador - Guerreiros Da Serra'}
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="text-right shrink-0">
-                        <span className="text-xs font-bold text-slate-800 block">
-                          Valor: {act.maxScore} pts
-                        </span>
-                        <span className="text-[11px] text-slate-400">
-                          {submissionList.length} entrega(s)
-                        </span>
+                      {/* Content Area */}
+                      <div className="p-5 space-y-3">
+                        <div>
+                          <h4 className="text-base font-bold text-slate-900 line-clamp-1">
+                            {act.title}
+                          </h4>
+                          <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                            {act.description}
+                          </p>
+                        </div>
+
+                        {act.teacherName && (
+                          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                            <span className="text-slate-400">Professor:</span>
+                            <span className="font-semibold text-slate-800">{act.teacherName}</span>
+                          </div>
+                        )}
+
+                        {/* Metadata row */}
+                        <div className="pt-3 border-t border-slate-100 grid grid-cols-3 gap-2 text-center text-xs">
+                          <div className="p-2 bg-slate-50 rounded-xl">
+                            <span className="text-[10px] text-slate-400 block">Questões</span>
+                            <span className="font-extrabold text-slate-800">{questionsCount}</span>
+                          </div>
+                          <div className="p-2 bg-slate-50 rounded-xl">
+                            <span className="text-[10px] text-slate-400 block">Valor</span>
+                            <span className="font-extrabold text-purple-700">{act.maxScore} pts</span>
+                          </div>
+                          <div className="p-2 bg-slate-50 rounded-xl">
+                            <span className="text-[10px] text-slate-400 block">Entregas</span>
+                            <span className="font-extrabold text-emerald-700">{submissionsCount}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                          <span>Prazo: {dueDateFormatted}</span>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                      <span className="text-slate-500">
-                        Total de Questões: <strong>{act.questions?.length || 1}</strong>
-                      </span>
-                      <span className="text-purple-600 font-bold">
-                        Prazo: {new Date(act.dueDate || '').toLocaleDateString('pt-BR')}
-                      </span>
+                    {/* Action Bar (Editar, Duplicar, Arquivar, Excluir) */}
+                    <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActivityToEdit(act);
+                          setShowActivityModal(true);
+                        }}
+                        className="flex-1 py-1.5 px-2 rounded-xl text-xs font-bold text-slate-700 hover:text-purple-700 hover:bg-white transition flex items-center justify-center gap-1 cursor-pointer"
+                        title="Editar atividade e questões"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        <span>Editar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDuplicate(act.id)}
+                        className="p-2 rounded-xl text-slate-500 hover:text-purple-700 hover:bg-white transition cursor-pointer"
+                        title="Duplicar atividade"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleToggleArchive(act.id)}
+                        className="p-2 rounded-xl text-slate-500 hover:text-amber-700 hover:bg-white transition cursor-pointer"
+                        title={act.isArchived ? 'Desarquivar atividade' : 'Arquivar atividade'}
+                      >
+                        {act.isArchived ? (
+                          <ArchiveRestore className="w-3.5 h-3.5" />
+                        ) : (
+                          <Archive className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(act.id)}
+                        className="p-2 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-white transition cursor-pointer"
+                        title="Excluir atividade"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 );
               })}
-            </div>
           </div>
         </div>
       )}
@@ -927,20 +1064,10 @@ export function DirectorDashboard({
                       <td className="py-3 px-3 text-center">
                         <button
                           type="button"
-                          onClick={() =>
-                            handleOpenGrading(
-                              sub.activityId,
-                              sub.studentId,
-                              sub.studentName,
-                              sub.content || '',
-                              sub.maxScore,
-                              sub.grade,
-                              sub.feedback
-                            )
-                          }
-                          className="text-xs font-bold text-purple-600 hover:text-purple-800 underline cursor-pointer"
+                          onClick={() => handleOpenSubmissionReview(sub.activityId, sub.studentId)}
+                          className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold transition cursor-pointer"
                         >
-                          {sub.status === 'AVALIADO' ? 'Ver / Editar Nota' : 'Avaliar'}
+                          {sub.status === 'AVALIADO' ? 'Ver / Editar Correção' : 'Avaliar & Corrigir'}
                         </button>
                       </td>
                     </tr>
@@ -963,10 +1090,10 @@ export function DirectorDashboard({
                 Central de Correções & Lançamento de Notas
               </h3>
               <p className="text-xs text-slate-500">
-                Avalie as submissões pendentes, atribua notas pedagógicas e dê feedbacks aos alunos.
+                Avalie questão por questão com autocorreção objetiva e atribuição de nota pedagógica para dissertativas.
               </p>
             </div>
-            <span className="text-xs font-bold text-rose-700 bg-rose-50 px-3 py-1 rounded-full">
+            <span className="text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-full">
               {atividadesAguardandoCorrecao} pendente(s)
             </span>
           </div>
@@ -978,45 +1105,43 @@ export function DirectorDashboard({
               <div className="text-xs text-slate-400 mt-0.5">Nenhuma submissão aguardando avaliação no momento.</div>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {allSubmissions
                 .filter((sub) => sub.status === 'PENDENTE')
                 .map((sub) => (
                   <div
                     key={`${sub.activityId}-${sub.studentId}`}
-                    className="p-4 bg-purple-50/50 rounded-2xl border border-purple-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                    className="p-5 bg-purple-50/40 rounded-3xl border border-purple-100 flex flex-col justify-between gap-4 hover:border-purple-200 transition"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-3">
                       <img
                         src={sub.studentAvatar}
                         alt={sub.studentName}
-                        className="w-11 h-11 rounded-full object-cover border-2 border-purple-300"
+                        className="w-11 h-11 rounded-full object-cover border-2 border-purple-300 shrink-0"
                       />
-                      <div>
-                        <div className="text-xs sm:text-sm font-bold text-slate-900">{sub.studentName}</div>
-                        <div className="text-xs text-purple-700 font-semibold">{sub.activityTitle}</div>
-                        <div className="text-[11px] text-slate-400">
-                          Entregue em: {new Date(sub.submittedAt).toLocaleDateString('pt-BR')} &bull; Valor: {sub.maxScore} pts
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-slate-900 truncate">{sub.studentName}</div>
+                        <div className="text-xs text-purple-700 font-semibold truncate">{sub.activityTitle}</div>
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          Entregue em: {new Date(sub.submittedAt).toLocaleDateString('pt-BR')} às{' '}
+                          {new Date(sub.submittedAt).toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </div>
+                        <div className="text-[11px] font-bold text-slate-700 mt-0.5">
+                          Valor total: {sub.maxScore} pontos
                         </div>
                       </div>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() =>
-                        handleOpenGrading(
-                          sub.activityId,
-                          sub.studentId,
-                          sub.studentName,
-                          sub.content || '',
-                          sub.maxScore,
-                          sub.grade,
-                          sub.feedback
-                        )
-                      }
-                      className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md shadow-purple-600/20 transition cursor-pointer self-start sm:self-auto"
+                      onClick={() => handleOpenSubmissionReview(sub.activityId, sub.studentId)}
+                      className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-2xl text-xs sm:text-sm font-bold shadow-md shadow-purple-600/20 transition cursor-pointer flex items-center justify-center gap-2"
                     >
-                      Avaliar e Lançar Nota
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Abrir Correção & Lançar Nota</span>
                     </button>
                   </div>
                 ))}
@@ -1228,7 +1353,44 @@ export function DirectorDashboard({
       )}
 
       {/* ==================================================
-          GRADING / FEEDBACK MODAL
+          ACTIVITY FORM MODAL (+ Nova Atividade / Editar)
+          ================================================== */}
+      {showActivityModal && (
+        <ActivityFormModal
+          activityToEdit={activityToEdit}
+          onSave={(activityData) => {
+            if (activityToEdit && onUpdateActivity) {
+              onUpdateActivity(activityData);
+            } else {
+              onCreateActivity(activityData);
+            }
+            setShowActivityModal(false);
+            setActivityToEdit(null);
+          }}
+          onClose={() => {
+            setShowActivityModal(false);
+            setActivityToEdit(null);
+          }}
+        />
+      )}
+
+      {/* ==================================================
+          SUBMISSION REVIEW & CORRECTION MODAL (Questão por questão)
+          ================================================== */}
+      {selectedSubmissionForReview && (
+        <SubmissionReviewModal
+          activity={selectedSubmissionForReview.activity}
+          submission={selectedSubmissionForReview.submission}
+          onSaveCorrection={(activityId, studentId, grade, feedback, questionScores) => {
+            onGradeSubmission(activityId, studentId, grade, feedback, questionScores);
+            setSelectedSubmissionForReview(null);
+          }}
+          onClose={() => setSelectedSubmissionForReview(null)}
+        />
+      )}
+
+      {/* ==================================================
+          LEGACY QUICK GRADING MODAL (Fallback)
           ================================================== */}
       {gradingModalData && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
