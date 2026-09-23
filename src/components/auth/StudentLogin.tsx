@@ -7,10 +7,16 @@ interface StudentLoginProps {
   onSuccess: (user: User) => void;
   onSwitchToRegister: () => void;
   onSwitchToDirector: () => void;
+  initialEmail?: string;
 }
 
-export function StudentLogin({ onSuccess, onSwitchToRegister, onSwitchToDirector }: StudentLoginProps) {
-  const [email, setEmail] = useState('');
+export function StudentLogin({
+  onSuccess,
+  onSwitchToRegister,
+  onSwitchToDirector,
+  initialEmail = '',
+}: StudentLoginProps) {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');

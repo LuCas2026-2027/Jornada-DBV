@@ -36,7 +36,7 @@ export function MobileNav({
         { id: 'DIR_CORRECTIONS', label: 'Correções', icon: Bell },
       ]
     : [
-        { id: 'DASHBOARD', label: 'Início', icon: LayoutDashboard },
+        { id: 'DASHBOARD', label: 'Dashboard', icon: LayoutDashboard },
         { id: 'ACTIVITIES', label: 'Atividades', icon: CheckSquare, badge: pendingActivitiesCount },
         { id: 'MY_ANSWERS', label: 'Respostas', icon: Award },
         { id: 'RESULTS', label: 'Resultados', icon: Bell },

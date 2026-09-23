@@ -55,6 +55,8 @@ interface SidebarProps {
   unreadNoticesCount?: number;
   pendingActivitiesCount?: number;
   pendingCorrectionsCount?: number;
+  schoolName?: string;
+  schoolLogo?: string;
 }
 
 export function Sidebar({
@@ -65,6 +67,8 @@ export function Sidebar({
   unreadNoticesCount = 0,
   pendingActivitiesCount = 0,
   pendingCorrectionsCount = 0,
+  schoolName,
+  schoolLogo,
 }: SidebarProps) {
   const isDirector = role === 'DIRETOR';
 
@@ -77,7 +81,7 @@ export function Sidebar({
   // - Perfil
   // - Sair
   const studentNavItems: NavItem[] = [
-    { id: 'DASHBOARD', label: 'Início', icon: LayoutDashboard },
+    { id: 'DASHBOARD', label: 'Dashboard', icon: LayoutDashboard },
     {
       id: 'ACTIVITIES',
       label: 'Atividades',
@@ -123,22 +127,30 @@ export function Sidebar({
       id="main-sidebar"
       className="hidden md:flex flex-col w-56 lg:w-64 bg-gradient-to-b from-[#7445f8] via-[#8152f7] to-[#8d5ef8] text-white p-5 rounded-3xl shadow-xl shadow-purple-950/15 select-none shrink-0"
     >
-      {/* Top Cap Icon */}
-      <div className="flex flex-col items-center mb-8">
-        <div className="w-16 h-16 lg:w-18 lg:h-18 rounded-2xl bg-white/15 backdrop-blur-md flex items-center justify-center p-3 shadow-inner border border-white/20 mb-2.5">
-          <svg
-            className="w-10 h-10 text-white drop-shadow-md"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-          >
-            <path d="M12 3L1 9L12 15L21 10.09V17H23V9M5 13.18V17.18L12 21L19 17.18V13.18L12 17L5 13.18Z" />
-          </svg>
+      {/* Top Cap / School Icon */}
+      <div className="flex flex-col items-center mb-8 text-center">
+        <div className="w-16 h-16 lg:w-18 lg:h-18 rounded-2xl bg-white/15 backdrop-blur-md flex items-center justify-center p-2.5 shadow-inner border border-white/20 mb-2.5 overflow-hidden">
+          {schoolLogo ? (
+            <img
+              src={schoolLogo}
+              alt="Logo da Escola"
+              className="w-full h-full object-cover rounded-xl shadow-xs"
+            />
+          ) : (
+            <svg
+              className="w-10 h-10 text-white drop-shadow-md"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+            >
+              <path d="M12 3L1 9L12 15L21 10.09V17H23V9M5 13.18V17.18L12 21L19 17.18V13.18L12 17L5 13.18Z" />
+            </svg>
+          )}
         </div>
-        <span className="text-sm font-bold tracking-wide text-white/90">
-          {isDirector ? 'Painel Direção' : 'Portal do Aluno'}
+        <span className="text-xs sm:text-sm font-bold tracking-wide text-white/95 line-clamp-1 max-w-[190px]">
+          {schoolName || (isDirector ? 'Painel Direção' : 'Portal do Aluno')}
         </span>
-        <span className="text-[10px] text-purple-200 uppercase tracking-widest font-semibold">
-          {isDirector ? 'Administração' : 'Ano Letivo 2026'}
+        <span className="text-[10px] text-purple-200 uppercase tracking-widest font-semibold mt-0.5">
+          {isDirector ? 'Direção Pedagógica' : 'Ano Letivo 2026'}
         </span>
       </div>
 

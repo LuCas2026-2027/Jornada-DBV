@@ -159,3 +159,25 @@ export interface ScheduleClass {
   room: string;
   teacher: string;
 }
+
+export interface SystemConfig {
+  isConfigured: boolean;
+  directorEmail: string;
+  directorPasswordHash: string;
+  directorName: string;
+  schoolName: string;
+  schoolLogo: string;
+  platformName: string;
+  primaryColor: string; // Ex: '#7445f8'
+  configuredAt?: string;
+}
+
+export type ToastType = 'SUCCESS' | 'ERROR' | 'INFO' | 'WARNING';
+
+export interface ToastMessage {
+  id: string;
+  title: string;
+  message?: string;
+  type: ToastType;
+  duration?: number;
+}

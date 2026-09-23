@@ -17,8 +17,10 @@ import {
   AlertTriangle,
   Send,
   HelpCircle,
+  Settings,
+  School,
 } from 'lucide-react';
-import { User, SchoolNotice, AppNotification } from '../../types';
+import { User, SchoolNotice, AppNotification, SystemConfig } from '../../types';
 
 interface HeaderProps {
   user: User;
@@ -26,8 +28,10 @@ interface HeaderProps {
   onSearchChange: (q: string) => void;
   notices: SchoolNotice[];
   notifications?: AppNotification[];
+  systemConfig?: SystemConfig;
   onOpenProfile?: () => void;
   onOpenSupabaseModal?: () => void;
+  onOpenSetupModal?: () => void;
   onSelectNotice?: (notice: SchoolNotice) => void;
   onSelectNotification?: (notification: AppNotification) => void;
   onMarkNotificationAsRead?: (notifId: string) => void;
@@ -41,8 +45,10 @@ export function Header({
   onSearchChange,
   notices,
   notifications = [],
+  systemConfig,
   onOpenProfile,
   onOpenSupabaseModal,
+  onOpenSetupModal,
   onSelectNotice,
   onSelectNotification,
   onMarkNotificationAsRead,
@@ -165,6 +171,21 @@ export function Header({
                 <UserIcon className="w-4 h-4 text-purple-600" />
                 <span>Meu Perfil</span>
               </button>
+
+              {onOpenSetupModal && isDirector && (
+                <button
+                  type="button"
+                  id="header-menu-setup-btn"
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    onOpenSetupModal();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 hover:text-purple-700 hover:bg-purple-50 rounded-2xl transition cursor-pointer"
+                >
+                  <Settings className="w-4 h-4 text-purple-600" />
+                  <span>Configurar Escola</span>
+                </button>
+              )}
 
               {onLogout && (
                 <button

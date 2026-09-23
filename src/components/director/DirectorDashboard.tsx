@@ -57,6 +57,8 @@ interface DirectorDashboardProps {
   ) => void;
   onCreateNotice: (newNotice: Omit<SchoolNotice, 'id' | 'publishDate'>) => void;
   onDeleteNotice: (noticeId: string) => void;
+  onOpenSetupModal?: () => void;
+  systemConfig?: any;
 }
 
 export function DirectorDashboard({
@@ -67,6 +69,8 @@ export function DirectorDashboard({
   activeDirectorTab,
   onNavigateTab,
   onOpenSupabaseModal,
+  onOpenSetupModal,
+  systemConfig,
   onCreateActivity,
   onUpdateActivity,
   onDeleteActivity,
@@ -569,8 +573,8 @@ export function DirectorDashboard({
               </span>
             </div>
 
-            {/* Exact Required Columns: Foto | Nome | Turma | Status | Atividade | Último acesso */}
-            <div className="overflow-x-auto">
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs sm:text-sm">
                 <thead className="bg-slate-50 text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-100">
                   <tr>
@@ -706,6 +710,94 @@ export function DirectorDashboard({
                 </tbody>
               </table>
             </div>
+
+            {/* Versão Responsiva para Celular / Tablet (Item 13) */}
+            <div className="md:hidden space-y-3">
+              {filteredStudents.map((student) => {
+                const status = student.onlineStatus || 'ONLINE';
+                const isAnswering = status === 'RESPONDENDO' && !!student.activeActivityProgress;
+                const progress = student.activeActivityProgress;
+
+                return (
+                  <div
+                    key={student.id}
+                    className="p-4 bg-slate-50/80 rounded-2xl border border-slate-100 space-y-3 shadow-xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={student.avatar}
+                          alt={student.name}
+                          className="w-10 h-10 rounded-full object-cover border border-purple-200 shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-xs text-slate-900 truncate">{student.name}</h4>
+                          <p className="text-[10px] text-slate-400 truncate">{student.email}</p>
+                        </div>
+                      </div>
+
+                      {/* Status */}
+                      <div>
+                        {status === 'ONLINE' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            Online
+                          </span>
+                        )}
+                        {status === 'RESPONDENDO' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                            Respondendo
+                          </span>
+                        )}
+                        {status === 'OFFLINE' && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                            <span className="w-2 h-2 rounded-full bg-slate-400" />
+                            Offline
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-200/50">
+                      <span>Turma: <strong className="text-slate-700">{student.grade || 'Guerreiros Da Serra'}</strong></span>
+                      <span>Acesso: <strong className="text-slate-700">{student.lastAccess || 'Hoje'}</strong></span>
+                    </div>
+
+                    {isAnswering && progress && (
+                      <div className="p-2.5 bg-amber-50/90 rounded-xl border border-amber-100 text-xs space-y-1">
+                        <div className="font-bold text-amber-900 line-clamp-1 text-[11px]">
+                          {progress.activityTitle}
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-amber-700">
+                          <span>Questão {progress.currentQuestion} de {progress.totalQuestions}</span>
+                          <span className="font-bold">
+                            {Math.round((progress.currentQuestion / progress.totalQuestions) * 100)}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {isAnswering && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBlockedPrivacyModalData({
+                            studentName: student.name,
+                            activityTitle: progress?.activityTitle || 'Atividade em Andamento',
+                            progressText: `Questão ${progress?.currentQuestion} de ${progress?.totalQuestions}`,
+                          })
+                        }
+                        className="w-full py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Respostas Ocultas (Sigilo Ativo)</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -735,7 +827,8 @@ export function DirectorDashboard({
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          {/* Desktop Table View */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left text-xs sm:text-sm">
               <thead className="bg-slate-50 text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-100">
                 <tr>
@@ -786,6 +879,60 @@ export function DirectorDashboard({
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile Card View (Item 13) */}
+          <div className="md:hidden space-y-3">
+            {filteredStudents.map((student) => {
+              const bDate = student.birthDate
+                ? `${student.birthDate.day < 10 ? '0' : ''}${student.birthDate.day}/${
+                    student.birthDate.month < 10 ? '0' : ''
+                  }${student.birthDate.month}/${student.birthDate.year}`
+                : '15/05/2008';
+
+              return (
+                <div
+                  key={student.id}
+                  className="p-4 bg-slate-50/80 rounded-2xl border border-slate-100 space-y-2.5 shadow-xs"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={student.avatar}
+                        alt={student.name}
+                        className="w-10 h-10 rounded-full object-cover border border-purple-200 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <h4 className="font-bold text-xs text-slate-900 truncate">{student.name}</h4>
+                        <p className="text-[10px] text-slate-400 truncate">{student.email}</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                      Ativo
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-200/60">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Matrícula</span>
+                      <span className="font-mono font-bold text-purple-700">
+                        {student.registrationNumber || '2026-MED3-001'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Nascimento</span>
+                      <span className="font-medium text-slate-700">{bDate}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-slate-400 block text-[10px]">Turma / Série</span>
+                      <span className="font-semibold text-slate-800">
+                        {student.grade || 'Desbravador - Guerreiros Da Serra'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1037,63 +1184,116 @@ export function DirectorDashboard({
               <div className="text-[11px] text-slate-400">Quando os alunos finalizarem suas atividades, elas aparecerão aqui.</div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs sm:text-sm">
-                <thead className="bg-slate-50 text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-100">
-                  <tr>
-                    <th className="py-3 px-3">Aluno</th>
-                    <th className="py-3 px-3">Atividade</th>
-                    <th className="py-3 px-3">Disciplina</th>
-                    <th className="py-3 px-3">Data de Envio</th>
-                    <th className="py-3 px-3">Status</th>
-                    <th className="py-3 px-3 text-center">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {allSubmissions.map((sub) => (
-                    <tr key={`${sub.activityId}-${sub.studentId}`} className="hover:bg-purple-50/30 transition">
-                      <td className="py-3 px-3 font-semibold text-slate-900 flex items-center gap-2.5">
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="bg-slate-50 text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-100">
+                    <tr>
+                      <th className="py-3 px-3">Aluno</th>
+                      <th className="py-3 px-3">Atividade</th>
+                      <th className="py-3 px-3">Disciplina</th>
+                      <th className="py-3 px-3">Data de Envio</th>
+                      <th className="py-3 px-3">Status</th>
+                      <th className="py-3 px-3 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {allSubmissions.map((sub) => (
+                      <tr key={`${sub.activityId}-${sub.studentId}`} className="hover:bg-purple-50/30 transition">
+                        <td className="py-3 px-3 font-semibold text-slate-900 flex items-center gap-2.5">
+                          <img
+                            src={sub.studentAvatar}
+                            alt={sub.studentName}
+                            className="w-8 h-8 rounded-full object-cover border border-purple-200"
+                          />
+                          <div>
+                            <div className="font-bold">{sub.studentName}</div>
+                            <div className="text-[10px] text-slate-400">{sub.studentGrade}</div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 font-medium text-slate-800">{sub.activityTitle}</td>
+                        <td className="py-3 px-3 text-slate-600">{sub.subject}</td>
+                        <td className="py-3 px-3 text-slate-500 text-xs">
+                          {new Date(sub.submittedAt).toLocaleDateString('pt-BR')} às{' '}
+                          {new Date(sub.submittedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="py-3 px-3">
+                          {sub.status === 'AVALIADO' ? (
+                            <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-100">
+                              Nota: {sub.grade}/{sub.maxScore}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
+                              Pendente de Correção
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenSubmissionReview(sub.activityId, sub.studentId)}
+                            className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold transition cursor-pointer"
+                          >
+                            {sub.status === 'AVALIADO' ? 'Ver / Editar Correção' : 'Avaliar & Corrigir'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card View (Item 13) */}
+              <div className="md:hidden space-y-3">
+                {allSubmissions.map((sub) => (
+                  <div
+                    key={`${sub.activityId}-${sub.studentId}`}
+                    className="p-4 bg-slate-50/80 rounded-2xl border border-slate-100 space-y-3 shadow-xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
                         <img
                           src={sub.studentAvatar}
                           alt={sub.studentName}
-                          className="w-8 h-8 rounded-full object-cover border border-purple-200"
+                          className="w-9 h-9 rounded-full object-cover border border-purple-200 shrink-0"
                         />
-                        <div>
-                          <div className="font-bold">{sub.studentName}</div>
-                          <div className="text-[10px] text-slate-400">{sub.studentGrade}</div>
+                        <div className="min-w-0">
+                          <h4 className="font-bold text-xs text-slate-900 truncate">{sub.studentName}</h4>
+                          <span className="text-[10px] text-slate-400 block truncate">{sub.studentGrade}</span>
                         </div>
-                      </td>
-                      <td className="py-3 px-3 font-medium text-slate-800">{sub.activityTitle}</td>
-                      <td className="py-3 px-3 text-slate-600">{sub.subject}</td>
-                      <td className="py-3 px-3 text-slate-500 text-xs">
-                        {new Date(sub.submittedAt).toLocaleDateString('pt-BR')} às{' '}
-                        {new Date(sub.submittedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td className="py-3 px-3">
-                        {sub.status === 'AVALIADO' ? (
-                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-100">
-                            Nota: {sub.grade}/{sub.maxScore}
-                          </span>
-                        ) : (
-                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
-                            Pendente de Correção
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenSubmissionReview(sub.activityId, sub.studentId)}
-                          className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold transition cursor-pointer"
-                        >
-                          {sub.status === 'AVALIADO' ? 'Ver / Editar Correção' : 'Avaliar & Corrigir'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      </div>
+
+                      {sub.status === 'AVALIADO' ? (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 shrink-0">
+                          Nota: {sub.grade}/{sub.maxScore}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 shrink-0">
+                          Pendente
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="p-2.5 bg-white rounded-xl border border-slate-100 text-xs space-y-1">
+                      <div className="font-bold text-slate-900 line-clamp-1">{sub.activityTitle}</div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Disciplina: <strong className="text-purple-700">{sub.subject}</strong></span>
+                        <span>{new Date(sub.submittedAt).toLocaleDateString('pt-BR')}</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenSubmissionReview(sub.activityId, sub.studentId)}
+                      className="w-full py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      {sub.status === 'AVALIADO' ? 'Ver / Editar Correção' : 'Avaliar & Corrigir'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1274,6 +1474,58 @@ export function DirectorDashboard({
           ================================================== */}
       {activeDirectorTab === 'DIR_SETTINGS' && (
         <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-100 shadow-sm space-y-6 max-w-3xl">
+          {/* Section 20: School Branding & Director Credentials */}
+          <div className="p-5 bg-purple-50/60 rounded-3xl border border-purple-100 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-700 bg-purple-100 px-2.5 py-0.5 rounded-full">
+                  Seção 20: Identidade & Gestão
+                </span>
+                <h4 className="text-base font-extrabold text-slate-900 mt-1">
+                  Identidade da Escola & Credenciais da Direção
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Gerencie o nome da instituição, logotipo oficial, cor do sistema e senha mestra do diretor.
+                </p>
+              </div>
+
+              {onOpenSetupModal && (
+                <button
+                  type="button"
+                  onClick={onOpenSetupModal}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/20 transition cursor-pointer self-start sm:self-auto shrink-0"
+                >
+                  Editar Configurações da Escola
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-white p-4 rounded-2xl border border-purple-100">
+              <div>
+                <span className="text-slate-400 block font-medium">Nome da Escola:</span>
+                <strong className="text-slate-800 text-sm">{systemConfig?.schoolName || 'Colégio Modelo'}</strong>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-medium">Nome da Plataforma:</span>
+                <strong className="text-slate-800 text-sm">{systemConfig?.platformName || 'Portal Escolar Inteligente'}</strong>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-medium">E-mail do Diretor:</span>
+                <strong className="text-slate-800 text-sm">{systemConfig?.directorEmail || director.email}</strong>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-medium">Cor Principal:</span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span
+                    className="w-4 h-4 rounded-full border border-slate-200"
+                    style={{ backgroundColor: systemConfig?.primaryColor || '#7445f8' }}
+                  />
+                  <span className="font-mono text-slate-700 font-bold">{systemConfig?.primaryColor || '#7445f8'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div>
             <h3 className="text-base sm:text-lg font-extrabold text-slate-900">
               Configurações Pedagógicas & Privacidade

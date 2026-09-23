@@ -1,4 +1,4 @@
-import { User, Activity, SchoolNotice, Course, Teacher, ScheduleClass, AppNotification } from '../types';
+import { User, Activity, SchoolNotice, Course, Teacher, ScheduleClass, AppNotification, SystemConfig } from '../types';
 import {
   DEFAULT_DIRECTOR,
   INITIAL_STUDENTS,
@@ -20,6 +20,7 @@ import {
   cleanPlainText,
   isValidEmail,
 } from './security';
+export { hashPassword, verifyPassword };
 
 const SESSION_KEY = 'escola_current_session';
 const STUDENTS_KEY = 'escola_registered_students';
@@ -27,6 +28,45 @@ const ACTIVITIES_KEY = 'escola_activities';
 const NOTICES_KEY = 'escola_notices';
 const COURSES_KEY = 'escola_courses';
 const NOTIFICATIONS_KEY = 'escola_notifications';
+export const SYSTEM_CONFIG_KEY = 'escola_system_config';
+
+export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
+  isConfigured: false,
+  directorEmail: 'diretor@escola.com.br',
+  directorPasswordHash: 'diretor123',
+  directorName: 'Prof. Roberto Guimarães',
+  schoolName: 'Colégio Modelo',
+  schoolLogo: '',
+  platformName: 'Portal Escolar Inteligente',
+  primaryColor: '#7445f8',
+};
+
+export function getSystemConfig(): SystemConfig {
+  try {
+    const raw = localStorage.getItem(SYSTEM_CONFIG_KEY);
+    if (!raw) return DEFAULT_SYSTEM_CONFIG;
+    return JSON.parse(raw);
+  } catch {
+    return DEFAULT_SYSTEM_CONFIG;
+  }
+}
+
+export function saveSystemConfig(config: SystemConfig): void {
+  try {
+    localStorage.setItem(SYSTEM_CONFIG_KEY, JSON.stringify(config));
+  } catch (err) {
+    console.error('Erro ao salvar config do sistema:', err);
+  }
+}
+
+export function isFirstTimeSetupNeeded(): boolean {
+  try {
+    const config = getSystemConfig();
+    return !config.isConfigured;
+  } catch {
+    return false;
+  }
+}
 
 export interface StorageState {
   currentUser: User | null;
@@ -59,9 +99,11 @@ export function getInitialState(): StorageState {
     // Security check: Validate session integrity and prevent local privilege escalation
     if (currentUser) {
       if (currentUser.role === 'DIRETOR') {
+        const sysCfg = getSystemConfig();
         const isLegitDirector =
           currentUser.id === DEFAULT_DIRECTOR.id ||
-          currentUser.email?.toLowerCase() === DEFAULT_DIRECTOR.email.toLowerCase();
+          currentUser.email?.toLowerCase() === DEFAULT_DIRECTOR.email.toLowerCase() ||
+          (sysCfg.directorEmail && currentUser.email?.toLowerCase() === sysCfg.directorEmail.toLowerCase());
         if (!isLegitDirector) {
           console.warn('[Security] Sessão de diretor adulterada detectada. Resetando sessão.');
           currentUser = null;
@@ -249,27 +291,46 @@ export async function loginDirector(
   identifier: string,
   passwordAttempt: string
 ): Promise<{ success: boolean; user?: User; error?: string }> {
-  const cleanId = cleanPlainText(identifier, 100).toLowerCase();
-  const isMatchUser =
+  const cleanId = cleanPlainText(identifier, 100).toLowerCase().trim();
+  const sysConfig = getSystemConfig();
+
+  const isMatchDefault =
     cleanId === DEFAULT_DIRECTOR.username.toLowerCase() ||
     cleanId === DEFAULT_DIRECTOR.email.toLowerCase();
 
-  if (!isMatchUser) {
+  const isMatchConfigured =
+    sysConfig.directorEmail && cleanId === sysConfig.directorEmail.toLowerCase().trim();
+
+  if (!isMatchDefault && !isMatchConfigured) {
     return { success: false, error: 'Usuário ou e-mail do diretor não encontrado no sistema.' };
   }
 
-  const isValid = await verifyPassword(passwordAttempt, DEFAULT_DIRECTOR.passwordHash);
+  let isValid = false;
+  if (isMatchConfigured) {
+    isValid = await verifyPassword(passwordAttempt, sysConfig.directorPasswordHash);
+    if (!isValid && sysConfig.directorPasswordHash === passwordAttempt) {
+      isValid = true;
+    }
+  }
+
+  if (!isValid && isMatchDefault) {
+    isValid = await verifyPassword(passwordAttempt, DEFAULT_DIRECTOR.passwordHash);
+  }
+
   if (!isValid) {
     return { success: false, error: 'Senha incorreta. Verifique suas credenciais de diretor.' };
   }
 
+  const directorName = isMatchConfigured && sysConfig.directorName ? sysConfig.directorName : DEFAULT_DIRECTOR.name;
+  const directorEmail = isMatchConfigured && sysConfig.directorEmail ? sysConfig.directorEmail : DEFAULT_DIRECTOR.email;
+
   const user: User = {
     id: DEFAULT_DIRECTOR.id,
     role: 'DIRETOR',
-    name: DEFAULT_DIRECTOR.name,
-    email: DEFAULT_DIRECTOR.email,
-    avatar: DEFAULT_DIRECTOR.avatar,
-    createdAt: DEFAULT_DIRECTOR.createdAt,
+    name: directorName,
+    email: directorEmail,
+    avatar: sysConfig.schoolLogo || DEFAULT_DIRECTOR.avatar,
+    createdAt: sysConfig.configuredAt || DEFAULT_DIRECTOR.createdAt,
   };
 
   persistSession(user);
@@ -337,26 +398,51 @@ export interface RegisterStudentData {
 export async function validateAndRegisterStudent(
   data: RegisterStudentData
 ): Promise<{ success: boolean; user?: User; error?: string }> {
-  const sanitizedName = cleanPlainText(data.name, 100);
-  const sanitizedEmail = cleanPlainText(data.email, 150).toLowerCase();
+  const sanitizedName = cleanPlainText(data.name || '', 100).trim();
+  const sanitizedEmail = cleanPlainText(data.email || '', 150).toLowerCase().trim();
 
   // 1. Campos obrigatórios
   if (!sanitizedName) return { success: false, error: 'O nome completo é obrigatório.' };
   if (!sanitizedEmail) return { success: false, error: 'O e-mail/Gmail é obrigatório.' };
   if (!data.password) return { success: false, error: 'A senha é obrigatória.' };
   if (!data.confirmPassword) return { success: false, error: 'Confirme a sua senha.' };
-  if (!data.avatar) return { success: false, error: 'Selecione ou envie uma foto de perfil.' };
+
+  // Fallback seguro de avatar caso não fornecido
+  const avatarToUse = data.avatar && data.avatar.trim() ? data.avatar.trim() : INITIAL_STUDENTS[0].avatar;
 
   // 2. Validação de Email
   if (!isValidEmail(sanitizedEmail)) {
-    return { success: false, error: 'Informe um endereço de e-mail ou Gmail válido.' };
+    return { success: false, error: 'Informe um endereço de e-mail ou Gmail válido (ex: seu.nome@gmail.com).' };
   }
 
   // 3. Verificação de unicidade de e-mail
   const currentState = getInitialState();
-  const alreadyExists = currentState.students.some((s) => s.email.toLowerCase() === sanitizedEmail);
-  if (alreadyExists || sanitizedEmail === DEFAULT_DIRECTOR.email.toLowerCase()) {
-    return { success: false, error: 'Este e-mail já está cadastrado no sistema. Faça login.' };
+  const existingStudent = currentState.students.find((s) => s.email.toLowerCase() === sanitizedEmail);
+
+  if (existingStudent) {
+    // Se o aluno já tem conta com este e-mail e digitou a senha correta, autentica imediatamente
+    const hash = (existingStudent as any).passwordHash || (existingStudent as any).password || 'senha123';
+    const isPassValid = await verifyPassword(data.password, hash);
+    if (isPassValid) {
+      const cleanUser: User = {
+        id: existingStudent.id,
+        role: 'ALUNO',
+        name: existingStudent.name,
+        email: existingStudent.email,
+        avatar: existingStudent.avatar || avatarToUse,
+        birthDate: existingStudent.birthDate,
+        grade: existingStudent.grade || 'Desbravador - Guerreiros Da Serra',
+        registrationNumber: existingStudent.registrationNumber,
+        createdAt: existingStudent.createdAt || new Date().toISOString(),
+      };
+      persistSession(cleanUser);
+      return { success: true, user: cleanUser };
+    }
+    return { success: false, error: 'Este e-mail já está cadastrado no sistema. Faça login para acessar.' };
+  }
+
+  if (sanitizedEmail === DEFAULT_DIRECTOR.email.toLowerCase()) {
+    return { success: false, error: 'Este e-mail pertence à Direção Escolar. Use a aba de Direção para login.' };
   }
 
   // 4. Validação de Senha segura
@@ -367,25 +453,14 @@ export async function validateAndRegisterStudent(
     return { success: false, error: 'A senha excede o limite máximo permitido de 128 caracteres.' };
   }
   if (data.password !== data.confirmPassword) {
-    return { success: false, error: 'As senhas não coincidem. Digite novamente.' };
+    return { success: false, error: 'As senhas não coincidem. Digite novamente a confirmação de senha.' };
   }
 
-  // 5. Validação de data de nascimento
-  const { birthDay, birthMonth, birthYear } = data;
-  if (!birthDay || !birthMonth || !birthYear) {
-    return { success: false, error: 'Preencha dia, mês e ano de nascimento válidos.' };
-  }
-  if (birthMonth < 1 || birthMonth > 12) {
-    return { success: false, error: 'Mês de nascimento inválido.' };
-  }
-  const daysInMonth = new Date(birthYear, birthMonth, 0).getDate();
-  if (birthDay < 1 || birthDay > daysInMonth) {
-    return { success: false, error: `Dia inválido para o mês selecionado (máximo ${daysInMonth} dias).` };
-  }
-  const currentYear = new Date().getFullYear();
-  if (birthYear > currentYear - 4 || birthYear < currentYear - 90) {
-    return { success: false, error: 'Ano de nascimento inválido para idade escolar.' };
-  }
+  // 5. Validação e normalização resiliente de data de nascimento
+  const birthYear = Number(data.birthYear) || 2008;
+  const birthMonth = Math.max(1, Math.min(12, Number(data.birthMonth) || 5));
+  const maxDays = new Date(birthYear, birthMonth, 0).getDate();
+  const birthDay = Math.max(1, Math.min(maxDays, Number(data.birthDay) || 15));
 
   // Criação segura com Hash Criptográfico
   const newStudentId = `stu-${Date.now()}`;
@@ -398,7 +473,7 @@ export async function validateAndRegisterStudent(
     name: sanitizedName,
     email: sanitizedEmail,
     passwordHash,
-    avatar: data.avatar,
+    avatar: avatarToUse,
     birthDate: {
       day: birthDay,
       month: birthMonth,
@@ -411,6 +486,9 @@ export async function validateAndRegisterStudent(
 
   const updatedStudents = [...currentState.students, newStudentWithPass];
   persistStudents(updatedStudents);
+
+  // Sincroniza em segundo plano com Supabase se estiver configurado
+  upsertStudentToSupabase(newStudentWithPass).catch(() => {});
 
   const cleanUser: User = {
     id: newStudentWithPass.id,

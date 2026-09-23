@@ -8,9 +8,22 @@ import {
   persistStudents,
   persistNotifications,
   saveActivityDraft,
+  getSystemConfig,
+  saveSystemConfig,
+  isFirstTimeSetupNeeded,
   StorageState,
 } from './services/storage';
-import { User, Activity, SchoolNotice, Course, Teacher, AppNotification } from './types';
+import {
+  User,
+  Activity,
+  SchoolNotice,
+  Course,
+  Teacher,
+  AppNotification,
+  ToastMessage,
+  ToastType,
+  SystemConfig,
+} from './types';
 import { AuthPortal } from './components/auth/AuthPortal';
 import { Sidebar, StudentTab, DirectorTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -28,6 +41,9 @@ import { DirectorDashboard } from './components/director/DirectorDashboard';
 import { ProfileModal } from './components/student/ProfileModal';
 import { TeacherContactModal } from './components/student/TeacherContactModal';
 import { SupabaseModal } from './components/common/SupabaseModal';
+import { ToastContainer } from './components/common/ToastContainer';
+import { ConfirmModal } from './components/common/ConfirmModal';
+import { FirstTimeSetupModal } from './components/auth/FirstTimeSetupModal';
 import {
   fetchStudentsFromSupabase,
   fetchActivitiesFromSupabase,
@@ -45,6 +61,49 @@ export default function App() {
   const [contactTeacher, setContactTeacher] = useState<Teacher | null>(null);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+
+  // System Configuration & UX States (Sections 17, 18, 20)
+  const [systemConfig, setSystemConfig] = useState<SystemConfig>(() => getSystemConfig());
+  const [showSetupModal, setShowSetupModal] = useState<boolean>(() => isFirstTimeSetupNeeded());
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [confirmModalState, setConfirmModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    variant?: 'purple' | 'danger' | 'warning';
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const addToast = (
+    title: string,
+    message?: string,
+    type: ToastType = 'SUCCESS',
+    duration = 4500
+  ) => {
+    const id = `toast-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    setToasts((prev) => [...prev, { id, title, message, type, duration }]);
+  };
+
+  const handleDismissToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const handleCompleteSetup = (newConfig: SystemConfig) => {
+    setSystemConfig(newConfig);
+    setShowSetupModal(false);
+    addToast(
+      'Configurações salvas!',
+      `A instituição "${newConfig.schoolName}" e a direção foram inicializadas.`,
+      'SUCCESS'
+    );
+  };
 
   // Sync state changes with localStorage
   const { currentUser, students, activities, notices, courses, teachers, schedule, notifications = [] } = appState;
@@ -89,7 +148,12 @@ export default function App() {
 
   // Auth Handlers
   const handleLoginSuccess = (user: User) => {
-    setAppState((prev) => ({ ...prev, currentUser: user }));
+    const freshState = getInitialState();
+    setAppState((prev) => ({
+      ...prev,
+      currentUser: user,
+      students: freshState.students,
+    }));
     if (user.role === 'DIRETOR') {
       setActiveTab('DIR_DASHBOARD');
     } else {
@@ -98,10 +162,22 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    persistSession(null);
-    setAppState((prev) => ({ ...prev, currentUser: null }));
-    setActiveTab('DASHBOARD');
-    setShowProfileModal(false);
+    setConfirmModalState({
+      isOpen: true,
+      title: 'Deseja realmente sair?',
+      message: 'Sua sessão atual no portal será encerrada com segurança.',
+      confirmText: 'Sim, Sair',
+      cancelText: 'Cancelar',
+      variant: 'danger',
+      onConfirm: () => {
+        setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
+        persistSession(null);
+        setAppState((prev) => ({ ...prev, currentUser: null }));
+        setActiveTab('DASHBOARD');
+        setShowProfileModal(false);
+        addToast('Sessão encerrada', 'Você saiu com segurança do portal.', 'INFO', 3000);
+      },
+    });
   };
 
   // Student Actions
@@ -114,6 +190,9 @@ export default function App() {
       console.warn('[Security] Ação não autorizada: Apenas alunos podem submeter atividades.');
       return;
     }
+
+    const currentAct = activities.find((a) => a.id === activityId);
+    const actTitle = currentAct?.title || 'Atividade';
 
     const updatedActivities = activities.map((act) => {
       if (act.id === activityId) {
@@ -149,12 +228,34 @@ export default function App() {
       return stu;
     });
 
+    // Notify director of submission
+    const directorNotif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      recipientRole: 'DIRETOR',
+      title: 'Novo envio de atividade',
+      message: `${currentUser.name} enviou respostas para "${actTitle}".`,
+      type: 'STUDENT_SUBMITTED',
+      createdAt: new Date().toISOString(),
+      read: false,
+      activityId,
+      studentId: currentUser.id,
+    };
+    const updatedNotifications = [directorNotif, ...(notifications || [])];
+
     persistActivities(updatedActivities);
+    persistNotifications(updatedNotifications);
     setAppState((prev) => ({
       ...prev,
       activities: updatedActivities,
       students: updatedStudents,
+      notifications: updatedNotifications,
     }));
+
+    addToast(
+      'Atividade enviada com sucesso!',
+      `Sua resposta em "${actTitle}" foi encaminhada para correção.`,
+      'SUCCESS'
+    );
   };
 
   const handleAutoSaveDraft = (
@@ -302,6 +403,7 @@ export default function App() {
     const updated = [newActivity, ...activities];
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
+    addToast('Atividade criada!', `"${newActData.title}" foi publicada com sucesso.`, 'SUCCESS');
   };
 
   const handleUpdateActivity = (updatedActivity: Activity) => {
@@ -312,6 +414,7 @@ export default function App() {
     const updated = activities.map((a) => (a.id === updatedActivity.id ? updatedActivity : a));
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
+    addToast('Atividade atualizada!', `"${updatedActivity.title}" foi salva com sucesso.`, 'SUCCESS');
   };
 
   const handleDeleteActivity = (activityId: string) => {
@@ -322,6 +425,7 @@ export default function App() {
     const updated = activities.filter((a) => a.id !== activityId);
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
+    addToast('Atividade excluída', 'A atividade foi removida do sistema.', 'INFO');
   };
 
   const handleDuplicateActivity = (activityId: string) => {
@@ -341,6 +445,7 @@ export default function App() {
     const updated = [duplicated, ...activities];
     persistActivities(updated);
     setAppState((prev) => ({ ...prev, activities: updated }));
+    addToast('Atividade duplicada!', 'Uma cópia da atividade foi criada.', 'SUCCESS');
   };
 
   const handleToggleArchiveActivity = (activityId: string) => {
@@ -407,6 +512,12 @@ export default function App() {
       activities: updatedActivities,
       notifications: updatedNotifications,
     }));
+
+    addToast(
+      'Correção lançada com sucesso!',
+      `Nota ${grade}/${act?.maxScore || 10} registrada e o aluno foi notificado.`,
+      'SUCCESS'
+    );
   };
 
   const handleCreateNotice = (newNoticeData: Omit<SchoolNotice, 'id' | 'publishDate'>) => {
@@ -425,12 +536,14 @@ export default function App() {
     const updated = [newNotice, ...notices];
     persistNotices(updated);
     setAppState((prev) => ({ ...prev, notices: updated }));
+    addToast('Comunicado publicado!', 'O aviso foi fixado no mural escolar.', 'SUCCESS');
   };
 
   const handleDeleteNotice = (noticeId: string) => {
     const updated = notices.filter((n) => n.id !== noticeId);
     persistNotices(updated);
     setAppState((prev) => ({ ...prev, notices: updated }));
+    addToast('Comunicado excluído', 'O aviso foi removido do mural.', 'INFO');
   };
 
   // If user is not authenticated, display AuthPortal
@@ -440,6 +553,8 @@ export default function App() {
         <AuthPortal
           onLoginSuccess={handleLoginSuccess}
           onOpenSupabaseModal={() => setShowSupabaseModal(true)}
+          systemConfig={systemConfig}
+          onOpenSetupModal={() => setShowSetupModal(true)}
         />
         <SupabaseModal
           isOpen={showSupabaseModal}
@@ -447,20 +562,39 @@ export default function App() {
           appState={appState}
           onDataRefreshed={loadSupabaseData}
         />
+        {showSetupModal && (
+          <FirstTimeSetupModal
+            isOpen={showSetupModal}
+            initialConfig={systemConfig}
+            onComplete={handleCompleteSetup}
+            onClose={() => setShowSetupModal(false)}
+          />
+        )}
+        <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
+        <ConfirmModal
+          isOpen={confirmModalState.isOpen}
+          title={confirmModalState.title}
+          message={confirmModalState.message}
+          confirmText={confirmModalState.confirmText}
+          cancelText={confirmModalState.cancelText}
+          variant={confirmModalState.variant}
+          onConfirm={confirmModalState.onConfirm}
+          onCancel={() => setConfirmModalState((prev) => ({ ...prev, isOpen: false }))}
+        />
       </>
     );
   }
 
   // Pending count for student
   const studentPendingCount = activities.filter(
-    (act) => !act.submissions[currentUser.id]
+    (act) => !act.submissions || !act.submissions[currentUser.id]
   ).length;
 
   // Pending corrections for director
   const directorPendingCorrectionsCount = activities.reduce(
     (acc, act) =>
       acc +
-      Object.values(act.submissions).filter((sub) => sub.status === 'PENDENTE').length,
+      Object.values(act.submissions || {}).filter((sub) => sub.status === 'PENDENTE').length,
     0
   );
 
@@ -483,6 +617,8 @@ export default function App() {
           pendingActivitiesCount={currentUser.role === 'ALUNO' ? studentPendingCount : undefined}
           pendingCorrectionsCount={currentUser.role === 'DIRETOR' ? directorPendingCorrectionsCount : undefined}
           unreadNoticesCount={notices.length}
+          schoolName={systemConfig.schoolName}
+          schoolLogo={systemConfig.schoolLogo}
         />
 
         {/* Main Content Area */}
@@ -494,8 +630,10 @@ export default function App() {
             onSearchChange={setSearchQuery}
             notices={notices}
             notifications={notifications}
+            systemConfig={systemConfig}
             onOpenProfile={() => setActiveTab('PROFILE')}
             onOpenSupabaseModal={() => setShowSupabaseModal(true)}
+            onOpenSetupModal={() => setShowSetupModal(true)}
             onSelectNotice={(notice) => {
               setSelectedNoticeId(notice.id);
               setActiveTab('NOTICES');
@@ -537,6 +675,8 @@ export default function App() {
               activeDirectorTab={activeTab}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onOpenSupabaseModal={() => setShowSupabaseModal(true)}
+              onOpenSetupModal={() => setShowSetupModal(true)}
+              systemConfig={systemConfig}
               onCreateActivity={handleCreateActivity}
               onUpdateActivity={handleUpdateActivity}
               onDeleteActivity={handleDeleteActivity}
@@ -558,6 +698,7 @@ export default function App() {
                   activities={activities}
                   notices={notices}
                   teachers={teachers}
+                  notifications={notifications}
                   onNavigateTab={(tab) => {
                     setActiveTab(tab);
                     setSelectedCourseForDetail(null);
@@ -574,6 +715,8 @@ export default function App() {
                     setSelectedNoticeId(notice.id);
                     setActiveTab('NOTICES');
                   }}
+                  onSelectNotification={handleSelectNotification}
+                  onMarkNotificationAsRead={handleMarkNotificationAsRead}
                   onContactTeacher={(teacher) => setContactTeacher(teacher)}
                 />
               )}
@@ -666,6 +809,31 @@ export default function App() {
           onClose={() => setContactTeacher(null)}
         />
       )}
+
+      {/* First Time Setup / Configuration Modal (Section 20) */}
+      {showSetupModal && (
+        <FirstTimeSetupModal
+          isOpen={showSetupModal}
+          initialConfig={systemConfig}
+          onComplete={handleCompleteSetup}
+          onClose={() => setShowSetupModal(false)}
+        />
+      )}
+
+      {/* Reusable Toast Notifications (Section 17) */}
+      <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
+
+      {/* Reusable Confirmation Dialog (Section 17) */}
+      <ConfirmModal
+        isOpen={confirmModalState.isOpen}
+        title={confirmModalState.title}
+        message={confirmModalState.message}
+        confirmText={confirmModalState.confirmText}
+        cancelText={confirmModalState.cancelText}
+        variant={confirmModalState.variant}
+        onConfirm={confirmModalState.onConfirm}
+        onCancel={() => setConfirmModalState((prev) => ({ ...prev, isOpen: false }))}
+      />
 
       {/* Supabase Connection & Synchronization Modal */}
       <SupabaseModal
