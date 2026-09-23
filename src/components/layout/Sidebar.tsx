@@ -33,6 +33,7 @@ export type StudentTab =
 export type DirectorTab =
   | 'DIR_DASHBOARD'
   | 'DIR_STUDENTS'
+  | 'DIR_TEACHERS'
   | 'DIR_ACTIVITIES'
   | 'DIR_SUBMISSIONS'
   | 'DIR_CORRECTIONS'
@@ -107,6 +108,7 @@ export function Sidebar({
   const directorNavItems: NavItem[] = [
     { id: 'DIR_DASHBOARD', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'DIR_STUDENTS', label: 'Alunos', icon: Users },
+    { id: 'DIR_TEACHERS', label: 'Professores', icon: BookOpen },
     { id: 'DIR_ACTIVITIES', label: 'Atividades', icon: CheckSquare },
     { id: 'DIR_SUBMISSIONS', label: 'Respostas enviadas', icon: Send },
     {

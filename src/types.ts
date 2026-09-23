@@ -1,4 +1,4 @@
-export type UserRole = 'DIRETOR' | 'ALUNO';
+export type UserRole = 'DIRETOR' | 'ALUNO' | 'PROFESSOR';
 
 export type StudentOnlineStatus = 'ONLINE' | 'RESPONDENDO' | 'OFFLINE';
 
@@ -37,6 +37,9 @@ export interface Teacher {
   avatar: string;
   email: string;
   availableHours: string;
+  password?: string;
+  passwordHash?: string;
+  role?: 'PROFESSOR';
 }
 
 export interface Course {

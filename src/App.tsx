@@ -6,6 +6,8 @@ import {
   persistNotices,
   persistCourses,
   persistStudents,
+  deleteStudent,
+  removeMockStudentAccounts,
   persistNotifications,
   saveActivityDraft,
   getSystemConfig,
@@ -546,6 +548,27 @@ export default function App() {
     addToast('Comunicado excluído', 'O aviso foi removido do mural.', 'INFO');
   };
 
+  const handleDeleteStudent = (studentId: string) => {
+    const student = students.find((s) => s.id === studentId);
+    const updated = deleteStudent(studentId);
+    setAppState((prev) => ({ ...prev, students: updated }));
+    addToast(
+      'Conta removida com sucesso!',
+      `A conta de ${student?.name || 'aluno'} foi excluída do sistema e do Supabase.`,
+      'INFO'
+    );
+  };
+
+  const handleRemoveMockStudents = () => {
+    const updated = removeMockStudentAccounts();
+    setAppState((prev) => ({ ...prev, students: updated }));
+    addToast(
+      'Contas de teste removidas!',
+      'Todas as contas de demonstração foram limpas com sucesso.',
+      'SUCCESS'
+    );
+  };
+
   // If user is not authenticated, display AuthPortal
   if (!currentUser) {
     return (
@@ -685,6 +708,8 @@ export default function App() {
               onGradeSubmission={handleGradeSubmission}
               onCreateNotice={handleCreateNotice}
               onDeleteNotice={handleDeleteNotice}
+              onDeleteStudent={handleDeleteStudent}
+              onRemoveMockStudents={handleRemoveMockStudents}
             />
           )}
 

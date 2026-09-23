@@ -11,8 +11,10 @@ import {
 } from '../data/mockData';
 import {
   upsertStudentToSupabase,
+  upsertTeacherToSupabase,
   upsertActivityToSupabase,
   upsertNoticeToSupabase,
+  deleteStudentFromSupabase,
 } from './supabaseService';
 import {
   hashPassword,
@@ -24,6 +26,7 @@ export { hashPassword, verifyPassword };
 
 const SESSION_KEY = 'escola_current_session';
 const STUDENTS_KEY = 'escola_registered_students';
+export const TEACHERS_KEY = 'escola_teachers';
 const ACTIVITIES_KEY = 'escola_activities';
 const NOTICES_KEY = 'escola_notices';
 const COURSES_KEY = 'escola_courses';
@@ -83,15 +86,28 @@ export interface StorageState {
 export function getInitialState(): StorageState {
   try {
     const storedStudents = localStorage.getItem(STUDENTS_KEY);
-    let students = storedStudents ? JSON.parse(storedStudents) : INITIAL_STUDENTS;
-    if (!Array.isArray(students) || students.length === 0) {
+    let students: any[] = [];
+    if (storedStudents !== null) {
+      try {
+        students = JSON.parse(storedStudents);
+      } catch {
+        students = [];
+      }
+    } else {
       students = INITIAL_STUDENTS;
     }
+
+    // Remove contas de teste/mock prévias (stu-01, stu-02, stu-03, stu-04, stu-05)
+    const mockIds = new Set(['stu-01', 'stu-02', 'stu-03', 'stu-04', 'stu-05']);
+    students = (Array.isArray(students) ? students : []).filter((s: any) => !mockIds.has(s?.id));
     students = students.map((s: any) => ({
       ...s,
       passwordHash: s.passwordHash || s.password || 'senha123',
       grade: s.grade && s.grade !== '3º Ano - Ensino Médio' ? s.grade : 'Desbravador - Guerreiros Da Serra',
     }));
+
+    // Mantém persistência atualizada sem as contas mock
+    localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
 
     const storedSession = localStorage.getItem(SESSION_KEY);
     let currentUser: User | null = storedSession ? JSON.parse(storedSession) : null;
@@ -154,13 +170,33 @@ export function getInitialState(): StorageState {
     const storedNotifications = localStorage.getItem(NOTIFICATIONS_KEY);
     const notifications: AppNotification[] = storedNotifications ? JSON.parse(storedNotifications) : INITIAL_NOTIFICATIONS;
 
+    const storedTeachers = localStorage.getItem(TEACHERS_KEY);
+    let teachers: Teacher[] = [];
+    if (storedTeachers) {
+      try {
+        teachers = JSON.parse(storedTeachers);
+      } catch {
+        teachers = INITIAL_TEACHERS;
+      }
+    } else {
+      teachers = INITIAL_TEACHERS;
+    }
+    // Assegura que todos os professores possuam email, senha e senha_hash
+    teachers = teachers.map((t) => ({
+      ...t,
+      password: t.password || t.passwordHash || 'prof123',
+      passwordHash: t.passwordHash || t.password || 'prof123',
+      role: 'PROFESSOR' as const,
+    }));
+    localStorage.setItem(TEACHERS_KEY, JSON.stringify(teachers));
+
     return {
       currentUser,
       students,
       activities,
       notices,
       courses,
-      teachers: INITIAL_TEACHERS,
+      teachers,
       schedule: INITIAL_SCHEDULE,
       notifications,
     };
@@ -205,12 +241,112 @@ export function persistSession(user: User | null): void {
 export function persistStudents(students: (User & { passwordHash: string })[]): void {
   try {
     localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
-    // Sincronização em segundo plano com Supabase se configurado
+    // Sincronização em segundo plano com Supabase
     students.forEach((s) => {
-      upsertStudentToSupabase(s).catch(() => {});
+      upsertStudentToSupabase(s).catch((err) => {
+        console.warn('[Supabase] Falha silenciosa ao sincronizar aluno:', err);
+      });
     });
   } catch (e) {
     console.error('Erro ao salvar alunos:', e);
+  }
+}
+
+// Remove uma conta de aluno do sistema local e do Supabase
+export function deleteStudent(studentId: string): (User & { passwordHash: string })[] {
+  try {
+    const stored = localStorage.getItem(STUDENTS_KEY);
+    const students: (User & { passwordHash: string })[] = stored ? JSON.parse(stored) : [];
+    const updated = students.filter((s) => s.id !== studentId);
+    localStorage.setItem(STUDENTS_KEY, JSON.stringify(updated));
+
+    // Se a conta removida for a sessão atual do navegador, limpa
+    const session = localStorage.getItem(SESSION_KEY);
+    if (session) {
+      try {
+        const u: User = JSON.parse(session);
+        if (u.id === studentId) {
+          localStorage.removeItem(SESSION_KEY);
+        }
+      } catch {}
+    }
+
+    // Deleta do Supabase em segundo plano
+    deleteStudentFromSupabase(studentId).catch(() => {});
+
+    return updated;
+  } catch (e) {
+    console.error('Erro ao deletar conta de aluno:', e);
+    return [];
+  }
+}
+
+// Remove todas as contas mock/demonstração
+export function removeMockStudentAccounts(): (User & { passwordHash: string })[] {
+  try {
+    const mockIds = new Set(['stu-01', 'stu-02', 'stu-03', 'stu-04', 'stu-05']);
+    const stored = localStorage.getItem(STUDENTS_KEY);
+    const students: (User & { passwordHash: string })[] = stored ? JSON.parse(stored) : [];
+    const updated = students.filter((s) => !mockIds.has(s.id));
+    localStorage.setItem(STUDENTS_KEY, JSON.stringify(updated));
+
+    mockIds.forEach((id) => {
+      deleteStudentFromSupabase(id).catch(() => {});
+    });
+
+    return updated;
+  } catch (e) {
+    console.error('Erro ao remover contas de demonstração:', e);
+    return [];
+  }
+}
+
+// Salva e sincroniza professores
+export function persistTeachers(teachers: Teacher[]): void {
+  try {
+    localStorage.setItem(TEACHERS_KEY, JSON.stringify(teachers));
+    teachers.forEach((t) => {
+      upsertTeacherToSupabase(t).catch((err) => {
+        console.warn('Erro ao sincronizar professor no Supabase:', err);
+      });
+    });
+  } catch (e) {
+    console.error('Erro ao persistir professores:', e);
+  }
+}
+
+// Atualiza o Gmail (email) e Senha do Professor localmente e no Supabase
+export function updateTeacherCredentials(
+  teacherId: string,
+  newEmail: string,
+  newPassword: string
+): Teacher[] {
+  try {
+    const raw = localStorage.getItem(TEACHERS_KEY);
+    let teachers: Teacher[] = raw ? JSON.parse(raw) : INITIAL_TEACHERS;
+
+    teachers = teachers.map((t) => {
+      if (t.id === teacherId) {
+        const updated: Teacher = {
+          ...t,
+          email: newEmail.trim().toLowerCase(),
+          password: newPassword.trim(),
+          passwordHash: newPassword.trim(),
+        };
+        // Sincroniza imediatamente com o Supabase em segundo plano
+        upsertTeacherToSupabase(updated).catch((err) => {
+          console.warn('[Supabase] Erro ao sincronizar credenciais do professor:', err);
+        });
+        return updated;
+      }
+      return t;
+    });
+
+    localStorage.setItem(TEACHERS_KEY, JSON.stringify(teachers));
+    return teachers;
+  } catch (err) {
+    console.error('Erro ao atualizar credenciais do professor:', err);
+    return [];
   }
 }
 
@@ -487,8 +623,17 @@ export async function validateAndRegisterStudent(
   const updatedStudents = [...currentState.students, newStudentWithPass];
   persistStudents(updatedStudents);
 
-  // Sincroniza em segundo plano com Supabase se estiver configurado
-  upsertStudentToSupabase(newStudentWithPass).catch(() => {});
+  // Sincroniza imediatamente com o Supabase
+  try {
+    const syncRes = await upsertStudentToSupabase(newStudentWithPass);
+    if (syncRes.success) {
+      console.log(`[Supabase] Nova conta cadastrada com sucesso: ${newStudentWithPass.email}`);
+    } else if (syncRes.error) {
+      console.warn(`[Supabase] Aviso ao cadastrar aluno no Supabase: ${syncRes.error}`);
+    }
+  } catch (syncErr) {
+    console.warn('[Supabase] Exceção ao sincronizar aluno com Supabase:', syncErr);
+  }
 
   const cleanUser: User = {
     id: newStudentWithPass.id,
