@@ -12,26 +12,123 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- SPA Redirect Decoder para GitHub Pages / Domínio Próprio -->
+    <script>
+      (function(l) {
+        if (l.search[1] === '/' ) {
+          var decoded = l.search.slice(1).split('&').map(function(s) { 
+            return s.replace(/~and~/g, '&')
+          }).join('?');
+          window.history.replaceState(null, null,
+              l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        }
+      }(window.location));
+    </script>
   </head>
   <body class="bg-[#f4f2fb] text-slate-800 antialiased font-['Plus_Jakarta_Sans',sans-serif]">
     <div id="root">
-      <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background-color: #f4f2fb; color: #475569; padding: 20px; text-align: center;">
-        <div style="width: 48px; height: 48px; border: 4px solid #e2e8f0; border-top-color: #7445f8; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px;"></div>
-        <h2 style="font-size: 1.25rem; font-weight: 700; color: #1e293b; margin: 0 0 6px 0;">Portal Escolar</h2>
-        <p style="font-size: 0.875rem; color: #64748b; margin: 0;">Carregando ambiente de estudos...</p>
+      <!-- Tela de inicialização resiliente com auto-diagnóstico -->
+      <div id="app-initial-loader" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; background-color: #f4f2fb; color: #475569; padding: 24px; text-align: center;">
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 32px 28px; max-width: 480px; width: 100%; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05), 0 8px 10px -6px rgba(0,0,0,0.01);">
+          <div id="loader-spinner" style="width: 44px; height: 44px; border: 4px solid #e2e8f0; border-top-color: #7445f8; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px auto;"></div>
+          
+          <h2 id="loader-title" style="font-size: 1.25rem; font-weight: 700; color: #1e293b; margin: 0 0 6px 0;">Portal Escolar</h2>
+          <p id="loader-subtitle" style="font-size: 0.875rem; color: #64748b; margin: 0 0 16px 0;">Carregando ambiente de estudos...</p>
+          
+          <div id="loader-details" style="display: none; text-align: left; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; font-size: 13px; color: #475569; margin-top: 14px; line-height: 1.5;">
+            <p id="loader-details-text" style="margin: 0;"></p>
+          </div>
+
+          <div id="loader-actions" style="display: none; margin-top: 18px; gap: 10px; flex-direction: column;">
+            <button onclick="window.location.reload();" style="width: 100%; padding: 10px 16px; background-color: #7445f8; color: #ffffff; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;">
+              Recarregar Página
+            </button>
+            <button onclick="try { localStorage.clear(); sessionStorage.clear(); } catch(e){} window.location.href = window.location.origin + window.location.pathname;" style="width: 100%; padding: 10px 16px; background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer;">
+              Limpar Cache e Reiniciar
+            </button>
+          </div>
+        </div>
+
         <noscript>
-          <div style="margin-top: 20px; padding: 12px 18px; background: #fee2e2; border: 1px solid #f87171; border-radius: 8px; color: #991b1b; font-size: 14px;">
+          <div style="margin-top: 20px; padding: 12px 18px; background: #fee2e2; border: 1px solid #f87171; border-radius: 12px; color: #991b1b; font-size: 14px;">
             Este aplicativo precisa do JavaScript habilitado no navegador para funcionar.
           </div>
         </noscript>
       </div>
+
       <style>
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
       </style>
     </div>
+
+    <!-- Script de proteção e diagnóstico de carregamento -->
+    <script>
+      (function() {
+        var hasReactMounted = false;
+        var capturedError = null;
+
+        function showDiagnosis(msg, isError) {
+          if (hasReactMounted) return;
+          var detailsBox = document.getElementById('loader-details');
+          var detailsText = document.getElementById('loader-details-text');
+          var actionsBox = document.getElementById('loader-actions');
+          var titleEl = document.getElementById('loader-title');
+          var subtitleEl = document.getElementById('loader-subtitle');
+          var spinner = document.getElementById('loader-spinner');
+
+          if (!detailsBox || !detailsText) return;
+
+          if (isError) {
+            if (spinner) {
+              spinner.style.borderTopColor = '#ef4444';
+              spinner.style.animation = 'none';
+            }
+            if (titleEl) titleEl.innerText = 'Inicialização Pendente';
+            if (subtitleEl) subtitleEl.innerText = 'Não foi possível carregar os arquivos do aplicativo.';
+          } else {
+            if (titleEl) titleEl.innerText = 'O portal está demorando a responder';
+            if (subtitleEl) subtitleEl.innerText = 'Verificando conexão e arquivos estáticos...';
+          }
+
+          detailsText.innerHTML = msg;
+          detailsBox.style.display = 'block';
+          if (actionsBox) actionsBox.style.display = 'flex';
+        }
+
+        window.addEventListener('error', function(e) {
+          capturedError = e;
+          var msg = e && e.message ? e.message : 'Erro ao carregar arquivos JavaScript.';
+          
+          // Detecta tentativa de carregar .tsx direto no navegador
+          if (e && e.filename && e.filename.indexOf('.tsx') !== -1) {
+            showDiagnosis('<strong>Aviso do GitHub Pages:</strong> O navegador tentou abrir o arquivo fonte <code>' + e.filename + '</code>. No GitHub, o site precisa ser publicado com a compilação do Vite (pasta <code>dist</code> ou GitHub Actions) e não com o arquivo TypeScript puro.', true);
+            return;
+          }
+
+          showDiagnosis('<strong>Detalhe:</strong> ' + msg + '<br><small style="color: #64748b;">Se você publicou no GitHub Pages, certifique-se de ativar o <strong>GitHub Actions</strong> em <em>Settings &gt; Pages</em> para compilar o projeto automaticamente.</small>', true);
+        });
+
+        // Watchdog: após 5 segundos, se o React não tiver montado, orienta o usuário
+        setTimeout(function() {
+          var root = document.getElementById('root');
+          var initialLoader = document.getElementById('app-initial-loader');
+          if (initialLoader && root && root.contains(initialLoader)) {
+            var isGitHub = window.location.hostname.indexOf('github.io') !== -1 || window.location.hostname.indexOf('github') !== -1;
+            var advice = 'O carregamento demorou mais que o esperado.<br><br>' +
+              '<strong>Dica para o seu domínio no GitHub:</strong><br>' +
+              '• No seu repositório do GitHub, vá em <strong>Settings &gt; Pages</strong>.<br>' +
+              '• Em <strong>Build and deployment &gt; Source</strong>, selecione <strong>GitHub Actions</strong>.<br>' +
+              '• O arquivo de deploy automatizado que criamos irá compilar a aplicação e publicá-la no seu domínio automaticamente.';
+            showDiagnosis(advice, false);
+          }
+        }, 5000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
