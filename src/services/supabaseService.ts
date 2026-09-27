@@ -1,8 +1,33 @@
-import { getSupabase, isSupabaseConfigured } from '../lib/supabase';
+import { getSupabase, isSupabaseConfigured, isSupabaseUnreachable, markSupabaseUnreachable } from '../lib/supabase';
 import { User, Activity, SchoolNotice, Course, AppNotification, Teacher } from '../types';
+
+/**
+ * Checks if an error is a network/reachability failure (e.g. paused project, DNS failure, Failed to fetch).
+ * If so, triggers the circuit breaker to prevent repeated failed requests and suppresses noisy console logs.
+ */
+function checkAndMarkUnreachable(error: any, context?: string): boolean {
+  if (!error) return false;
+  const msg = error?.message || String(error || '');
+  if (
+    msg.includes('Failed to fetch') ||
+    msg.includes('NetworkError') ||
+    msg.includes('Load failed') ||
+    msg.includes('net::ERR') ||
+    msg.includes('timeout') ||
+    msg.includes('Failed to load resource')
+  ) {
+    markSupabaseUnreachable('Failed to fetch');
+    return true;
+  }
+  if (context && !msg.includes('PGRST116')) {
+    console.warn(`[Supabase - ${context}]:`, msg);
+  }
+  return false;
+}
 
 // Convert student record between DB and app (supports both 'usuarios' and 'students' tables)
 export async function fetchStudentsFromSupabase(): Promise<(User & { passwordHash: string })[] | null> {
+  if (isSupabaseUnreachable()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
@@ -30,6 +55,10 @@ export async function fetchStudentsFromSupabase(): Promise<(User & { passwordHas
       }));
     }
 
+    if (userError) {
+      if (checkAndMarkUnreachable(userError, 'usuarios')) return null;
+    }
+
     // 2. Fallback to 'students' table
     const { data: stuData, error: stuError } = await supabase.from('students').select('*');
     if (!stuError && stuData && stuData.length > 0) {
@@ -49,9 +78,13 @@ export async function fetchStudentsFromSupabase(): Promise<(User & { passwordHas
       }));
     }
 
+    if (stuError) {
+      checkAndMarkUnreachable(stuError, 'students');
+    }
+
     return null;
-  } catch (e) {
-    console.warn('Exceção ao buscar alunos no Supabase:', e);
+  } catch (e: any) {
+    checkAndMarkUnreachable(e, 'excecao_alunos');
     return null;
   }
 }
@@ -205,6 +238,7 @@ export async function upsertDirectorToSupabase(
  * Fetch teachers from Supabase (supports 'usuarios' with tipo_usuario='PROFESSOR', 'professores', and 'teachers' tables)
  */
 export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
+  if (isSupabaseUnreachable()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
@@ -232,10 +266,14 @@ export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
             role: 'PROFESSOR',
           });
         }
+      } else if (userError) {
+        if (checkAndMarkUnreachable(userError, 'professores_usuarios')) return null;
       }
-    } catch (e) {
-      console.warn('Aviso ao consultar professores em usuarios:', e);
+    } catch (e: any) {
+      if (checkAndMarkUnreachable(e, 'professores_usuarios_exc')) return null;
     }
+
+    if (isSupabaseUnreachable()) return null;
 
     // 2. Check 'professores' table
     try {
@@ -258,10 +296,14 @@ export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
             role: 'PROFESSOR',
           });
         }
+      } else if (profError) {
+        if (checkAndMarkUnreachable(profError, 'professores_table')) return null;
       }
-    } catch (e) {
-      console.warn('Aviso ao consultar tabela professores:', e);
+    } catch (e: any) {
+      if (checkAndMarkUnreachable(e, 'professores_table_exc')) return null;
     }
+
+    if (isSupabaseUnreachable()) return null;
 
     // 3. Check 'teachers' table
     try {
@@ -284,9 +326,11 @@ export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
             role: 'PROFESSOR',
           });
         }
+      } else if (tecError) {
+        checkAndMarkUnreachable(tecError, 'teachers_table');
       }
-    } catch (e) {
-      console.warn('Aviso ao consultar tabela teachers:', e);
+    } catch (e: any) {
+      checkAndMarkUnreachable(e, 'teachers_table_exc');
     }
 
     if (teachersMap.size > 0) {
@@ -294,8 +338,8 @@ export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
     }
 
     return null;
-  } catch (err) {
-    console.warn('[Supabase] Erro ao buscar professores do banco:', err);
+  } catch (err: any) {
+    checkAndMarkUnreachable(err, 'buscar_professores');
     return null;
   }
 }
@@ -412,42 +456,74 @@ export async function syncAllTeachersToSupabase(teachers: Teacher[]): Promise<bo
 
 export const pushTeachersToSupabase = syncAllTeachersToSupabase;
 
-// Convert activities between DB and app
+// Convert activities between DB and app (supports both 'activities' and 'atividades' tables)
 export async function fetchActivitiesFromSupabase(): Promise<Activity[] | null> {
+  if (isSupabaseUnreachable()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
   try {
+    // 1. Try primary 'activities' table
     const { data, error } = await supabase.from('activities').select('*').order('updated_at', { ascending: false });
-    if (error || !data) {
-      console.warn('Erro ao carregar atividades do Supabase:', error);
-      return null;
+    if (!error && data && data.length > 0) {
+      return data.map((row: any): Activity => ({
+        id: row.id,
+        title: row.title,
+        subject: row.subject,
+        targetClass: row.target_class,
+        teacherName: row.teacher_name,
+        teacherAvatar: row.teacher_avatar,
+        coverImage: row.cover_image,
+        dueDate: row.due_date,
+        maxScore: Number(row.max_score) || 10,
+        description: row.description || '',
+        instructions: Array.isArray(row.instructions) ? row.instructions : [],
+        questions: row.questions || [],
+        submissions: row.submissions || {},
+        drafts: row.drafts || {},
+        isArchived: Boolean(row.is_archived),
+      }));
     }
 
-    return data.map((row: any): Activity => ({
-      id: row.id,
-      title: row.title,
-      subject: row.subject,
-      targetClass: row.target_class,
-      teacherName: row.teacher_name,
-      teacherAvatar: row.teacher_avatar,
-      coverImage: row.cover_image,
-      dueDate: row.due_date,
-      maxScore: Number(row.max_score) || 10,
-      description: row.description || '',
-      instructions: Array.isArray(row.instructions) ? row.instructions : [],
-      questions: row.questions || [],
-      submissions: row.submissions || {},
-      drafts: row.drafts || {},
-      isArchived: Boolean(row.is_archived),
-    }));
-  } catch (e) {
-    console.warn('Exceção ao buscar atividades no Supabase:', e);
+    if (error) {
+      if (checkAndMarkUnreachable(error, 'activities')) return null;
+    }
+
+    // 2. Try 'atividades' table fallback (Section 14)
+    const { data: ativData, error: ativError } = await supabase.from('atividades').select('*');
+    if (!ativError && ativData && ativData.length > 0) {
+      return ativData.map((row: any): Activity => ({
+        id: row.id,
+        title: row.titulo || 'Atividade',
+        subject: row.materia || 'Geral',
+        targetClass: row.turma || 'Todos',
+        teacherName: row.professor || 'Professor',
+        teacherAvatar: row.capa || 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150',
+        coverImage: row.capa,
+        dueDate: row.prazo || '',
+        maxScore: Number(row.max_nota) || 10,
+        description: row.descricao || '',
+        instructions: [],
+        questions: [],
+        submissions: {},
+        drafts: {},
+        isArchived: false,
+      }));
+    }
+
+    if (ativError) {
+      checkAndMarkUnreachable(ativError, 'atividades_fallback');
+    }
+
+    return null;
+  } catch (e: any) {
+    checkAndMarkUnreachable(e, 'excecao_atividades');
     return null;
   }
 }
 
 export async function upsertActivityToSupabase(activity: Activity): Promise<boolean> {
+  if (isSupabaseUnreachable()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 
@@ -470,20 +546,31 @@ export async function upsertActivityToSupabase(activity: Activity): Promise<bool
       is_archived: Boolean(activity.isArchived),
       updated_at: new Date().toISOString(),
     });
-    return !error;
-  } catch {
+
+    if (error) {
+      checkAndMarkUnreachable(error, 'upsert_activities');
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    checkAndMarkUnreachable(err, 'upsert_activities_exc');
     return false;
   }
 }
 
 // Convert school notices between DB and app
 export async function fetchNoticesFromSupabase(): Promise<SchoolNotice[] | null> {
+  if (isSupabaseUnreachable()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
   try {
     const { data, error } = await supabase.from('school_notices').select('*').order('created_at', { ascending: false });
-    if (error || !data) return null;
+    if (error) {
+      checkAndMarkUnreachable(error, 'school_notices');
+      return null;
+    }
+    if (!data) return null;
 
     return data.map((row: any): SchoolNotice => ({
       id: row.id,
@@ -494,12 +581,14 @@ export async function fetchNoticesFromSupabase(): Promise<SchoolNotice[] | null>
       author: row.author,
       pinned: Boolean(row.pinned),
     }));
-  } catch {
+  } catch (e: any) {
+    checkAndMarkUnreachable(e, 'excecao_notices');
     return null;
   }
 }
 
 export async function upsertNoticeToSupabase(notice: SchoolNotice): Promise<boolean> {
+  if (isSupabaseUnreachable()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 
@@ -514,8 +603,14 @@ export async function upsertNoticeToSupabase(notice: SchoolNotice): Promise<bool
       pinned: Boolean(notice.pinned),
       created_at: new Date().toISOString(),
     });
-    return !error;
-  } catch {
+
+    if (error) {
+      checkAndMarkUnreachable(error, 'upsert_notice');
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    checkAndMarkUnreachable(err, 'upsert_notice_exc');
     return false;
   }
 }
@@ -529,6 +624,13 @@ export async function migrateAllLocalDataToSupabase(state: {
   notifications: AppNotification[];
   teachers?: Teacher[];
 }): Promise<{ success: boolean; counts: Record<string, number>; message: string }> {
+  if (isSupabaseUnreachable()) {
+    return {
+      success: false,
+      counts: {},
+      message: 'Supabase está atualmente inacessível (Failed to fetch). Verifique se o projeto está ativo no painel do Supabase.',
+    };
+  }
   const supabase = getSupabase();
   if (!supabase) {
     return {

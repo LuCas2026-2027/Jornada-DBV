@@ -2,6 +2,60 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export const SUPABASE_LOCAL_URL_KEY = 'escola_supabase_url';
 export const SUPABASE_LOCAL_KEY_KEY = 'escola_supabase_anon_key';
+export const SUPABASE_DISABLED_KEY = 'escola_supabase_disabled';
+
+// Circuit breaker state to prevent repeatedly hammering an unreachable or paused host
+let isUnreachable = false;
+let unreachableReason = '';
+let unreachableUntil = 0;
+
+export function markSupabaseUnreachable(reason = 'Failed to fetch'): void {
+  isUnreachable = true;
+  unreachableReason = reason;
+  unreachableUntil = Date.now() + 60 * 1000; // 60s cooldown before background auto-retry
+}
+
+export function isSupabaseUnreachable(): boolean {
+  if (!isUnreachable) return false;
+  if (Date.now() > unreachableUntil) {
+    isUnreachable = false;
+    unreachableReason = '';
+    return false;
+  }
+  return true;
+}
+
+export function getSupabaseUnreachableReason(): string {
+  return unreachableReason;
+}
+
+export function clearSupabaseUnreachable(): void {
+  isUnreachable = false;
+  unreachableReason = '';
+  unreachableUntil = 0;
+}
+
+export function isSupabaseDisabledManually(): boolean {
+  try {
+    return localStorage.getItem(SUPABASE_DISABLED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setSupabaseDisabledManually(disabled: boolean): void {
+  try {
+    if (disabled) {
+      localStorage.setItem(SUPABASE_DISABLED_KEY, 'true');
+    } else {
+      localStorage.removeItem(SUPABASE_DISABLED_KEY);
+    }
+    cachedClient = null;
+    clearSupabaseUnreachable();
+  } catch (err) {
+    console.error('Erro ao atualizar status do Supabase:', err);
+  }
+}
 
 /**
  * Normalizes Supabase Project URL.
@@ -77,8 +131,11 @@ export function saveStoredSupabaseCredentials(url: string, anonKey: string): voi
       localStorage.removeItem(SUPABASE_LOCAL_KEY_KEY);
     }
 
-    // Reset client cache so new credentials take effect immediately
+    // Reset client cache and unreachability flag so new credentials take effect immediately
     cachedClient = null;
+    clearSupabaseUnreachable();
+    // Also remove disabled flag if user explicitly provides new credentials
+    localStorage.removeItem(SUPABASE_DISABLED_KEY);
   } catch (err) {
     console.error('Erro ao salvar credenciais do Supabase:', err);
   }
@@ -89,13 +146,15 @@ export function clearStoredSupabaseCredentials(): void {
     localStorage.removeItem(SUPABASE_LOCAL_URL_KEY);
     localStorage.removeItem(SUPABASE_LOCAL_KEY_KEY);
     cachedClient = null;
+    clearSupabaseUnreachable();
   } catch {
     // ignore
   }
 }
 
-// Verify if valid config is present (not placeholder)
+// Verify if valid config is present (not placeholder and not manually disabled)
 export function isSupabaseConfigured(): boolean {
+  if (isSupabaseDisabledManually()) return false;
   const { url: rawUrl, anonKey: rawAnonKey } = getStoredSupabaseCredentials();
   const url = normalizeSupabaseUrl(rawUrl);
   const key = normalizeSupabaseKey(rawAnonKey);
@@ -113,8 +172,14 @@ export function getSupabaseConfigDetails() {
   const { url: rawUrl, anonKey: rawAnonKey, isFromStorage } = getStoredSupabaseCredentials();
   const url = normalizeSupabaseUrl(rawUrl);
   const key = normalizeSupabaseKey(rawAnonKey);
+  const isManuallyDisabled = isSupabaseDisabledManually();
+  const unreachable = isSupabaseUnreachable();
+
   return {
     isConfigured: isSupabaseConfigured(),
+    isManuallyDisabled,
+    isUnreachable: unreachable,
+    unreachableReason: getSupabaseUnreachableReason(),
     isFromStorage,
     rawUrl,
     rawKey: key,
@@ -145,13 +210,24 @@ export function getSupabase(): SupabaseClient | null {
 
 export interface ConnectionTestResult {
   success: boolean;
-  status: 'connected' | 'not_configured' | 'error' | 'table_missing';
+  status: 'connected' | 'not_configured' | 'error' | 'table_missing' | 'unreachable';
   message: string;
   latencyMs?: number;
   details?: string;
 }
 
 export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
+  // Clear any existing unreachable lock for a fresh user test
+  clearSupabaseUnreachable();
+
+  if (isSupabaseDisabledManually()) {
+    return {
+      success: false,
+      status: 'not_configured',
+      message: 'O Supabase está pausado manualmente. O aplicativo está operando 100% em modo de Armazenamento Local.',
+    };
+  }
+
   if (!isSupabaseConfigured()) {
     return {
       success: false,
@@ -171,11 +247,17 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
 
   const start = performance.now();
   try {
-    // Attempt a light ping by querying usuarios, students or activities
-    const [userRes, actRes] = await Promise.all([
+    // Attempt a light ping by querying usuarios, students or activities with timeout
+    const timeoutPromise = new Promise<{ timeout: true }>((_, reject) =>
+      setTimeout(() => reject(new Error('Tempo limite de conexão excedido (Failed to fetch / timeout)')), 6000)
+    );
+
+    const pingPromise = Promise.all([
       client.from('usuarios').select('id').limit(1),
       client.from('activities').select('id').limit(1),
     ]);
+
+    const [userRes, actRes] = (await Promise.race([pingPromise, timeoutPromise])) as [any, any];
 
     const latencyMs = Math.round(performance.now() - start);
 
@@ -191,10 +273,29 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
         };
       }
 
+      const errMsg = userRes.error.message || actRes.error.message || '';
+      if (
+        errMsg.includes('Failed to fetch') ||
+        errMsg.includes('NetworkError') ||
+        errMsg.includes('Load failed') ||
+        errMsg.includes('fetch')
+      ) {
+        markSupabaseUnreachable('Failed to fetch');
+        return {
+          success: false,
+          status: 'unreachable',
+          message:
+            'Não foi possível conectar ao servidor do Supabase (Failed to fetch). O projeto pode estar pausado no painel do Supabase (projetos gratuitos são pausados automaticamente após alguns dias sem uso), ou a URL configurada não existe. O aplicativo continuará funcionando normalmente no Modo Local.',
+          latencyMs,
+          details:
+            'Host inacessível ou projeto pausado. Acesse supabase.com e clique em "Restore project", ou atualize a URL nas configurações, ou clique em "Usar Modo 100% Local".',
+        };
+      }
+
       return {
         success: false,
         status: 'error',
-        message: `Erro de conexão com o Supabase: ${userRes.error.message}`,
+        message: `Erro retornado pelo Supabase: ${errMsg}`,
         latencyMs,
         details: `${userRes.error.code || ''} ${userRes.error.hint || ''}`,
       };
@@ -208,10 +309,27 @@ export async function testSupabaseConnection(): Promise<ConnectionTestResult> {
     };
   } catch (err: any) {
     const latencyMs = Math.round(performance.now() - start);
+    const errText = err?.message || 'Erro de rede desconhecido';
+    if (
+      errText.includes('Failed to fetch') ||
+      errText.includes('timeout') ||
+      errText.includes('NetworkError') ||
+      errText.includes('Load failed')
+    ) {
+      markSupabaseUnreachable('Failed to fetch');
+      return {
+        success: false,
+        status: 'unreachable',
+        message:
+          'Não foi possível alcançar o servidor do Supabase (Failed to fetch). O projeto pode estar inativo/pausado ou a URL está incorreta. O aplicativo está operando perfeitamente no Modo Local.',
+        latencyMs,
+        details: 'Acesse supabase.com para conferir se seu projeto está Ativo ("Restore project") ou altere as credenciais.',
+      };
+    }
     return {
       success: false,
       status: 'error',
-      message: `Falha ao conectar com o Supabase: ${err?.message || 'Erro de rede desconhecido'}`,
+      message: `Falha ao conectar com o Supabase: ${errText}`,
       latencyMs,
     };
   }

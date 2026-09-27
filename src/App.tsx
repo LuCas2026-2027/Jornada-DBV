@@ -55,7 +55,7 @@ import {
   upsertTeacherToSupabase,
   pushTeachersToSupabase,
 } from './services/supabaseService';
-import { isSupabaseConfigured } from './lib/supabase';
+import { isSupabaseConfigured, isSupabaseUnreachable } from './lib/supabase';
 
 export default function App() {
   const [appState, setAppState] = useState<StorageState>(() => getInitialState());
@@ -116,7 +116,7 @@ export default function App() {
 
   // Load data from Supabase if configured and available
   const loadSupabaseData = async () => {
-    if (!isSupabaseConfigured()) return;
+    if (!isSupabaseConfigured() || isSupabaseUnreachable()) return;
     try {
       const [remoteStudents, remoteActivities, remoteNotices, remoteTeachers] = await Promise.all([
         fetchStudentsFromSupabase(),
@@ -125,6 +125,8 @@ export default function App() {
         fetchTeachersFromSupabase(),
       ]);
 
+      if (isSupabaseUnreachable()) return;
+
       setAppState((prev) => ({
         ...prev,
         students: remoteStudents && remoteStudents.length > 0 ? remoteStudents : prev.students,
@@ -132,8 +134,8 @@ export default function App() {
         notices: remoteNotices && remoteNotices.length > 0 ? remoteNotices : prev.notices,
         teachers: remoteTeachers && remoteTeachers.length > 0 ? remoteTeachers : prev.teachers,
       }));
-    } catch (e) {
-      console.warn('Erro ao carregar dados do Supabase:', e);
+    } catch {
+      // Graceful fallback to local data
     }
   };
 
