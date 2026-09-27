@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Activity, SchoolNotice, ActivitySubmission } from '../../types';
+import { User, Activity, SchoolNotice, ActivitySubmission, Teacher } from '../../types';
 import {
   Users,
   CheckSquare,
@@ -16,6 +16,7 @@ import {
   BookOpen,
   Lock,
   Eye,
+  EyeOff,
   GraduationCap,
   BarChart3,
   Settings,
@@ -30,6 +31,11 @@ import {
   Archive,
   ArchiveRestore,
   Database,
+  RefreshCw,
+  Check,
+  Key,
+  Save,
+  ExternalLink,
 } from 'lucide-react';
 import { ActivityFormModal } from './ActivityFormModal';
 import { SubmissionReviewModal } from './SubmissionReviewModal';
@@ -40,6 +46,7 @@ interface DirectorDashboardProps {
   students: (User & { passwordHash?: string })[];
   activities: Activity[];
   notices: SchoolNotice[];
+  teachers?: Teacher[];
   activeDirectorTab: string;
   onNavigateTab: (tab: string) => void;
   onOpenSupabaseModal?: () => void;
@@ -60,6 +67,9 @@ interface DirectorDashboardProps {
   onDeleteStudent?: (studentId: string) => void;
   onRemoveMockStudents?: () => void;
   onOpenSetupModal?: () => void;
+  onUpdateTeacher?: (updatedTeacher: Teacher) => Promise<boolean | void> | void;
+  onSyncTeachersFromSupabase?: () => Promise<void>;
+  onPushTeachersToSupabase?: () => Promise<void>;
   systemConfig?: any;
 }
 
@@ -68,6 +78,7 @@ export function DirectorDashboard({
   students,
   activities,
   notices,
+  teachers = [],
   activeDirectorTab,
   onNavigateTab,
   onOpenSupabaseModal,
@@ -83,11 +94,90 @@ export function DirectorDashboard({
   onDeleteNotice,
   onDeleteStudent,
   onRemoveMockStudents,
+  onUpdateTeacher,
+  onSyncTeachersFromSupabase,
+  onPushTeachersToSupabase,
 }: DirectorDashboardProps) {
   // Filters & State
   const [studentSearch, setStudentSearch] = useState('');
   const [monitorStatusFilter, setMonitorStatusFilter] = useState<'ALL' | 'ONLINE' | 'RESPONDENDO' | 'OFFLINE'>('ALL');
   const [studentToDelete, setStudentToDelete] = useState<User | null>(null);
+
+  // Teacher Management State
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null);
+  const [editTeacherEmail, setEditTeacherEmail] = useState('');
+  const [editTeacherPassword, setEditTeacherPassword] = useState('');
+  const [editTeacherSubject, setEditTeacherSubject] = useState('');
+  const [showPasswordMap, setShowPasswordMap] = useState<Record<string, boolean>>({});
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [isSyncingTeachers, setIsSyncingTeachers] = useState(false);
+  const [teacherSyncStatus, setTeacherSyncStatus] = useState<string | null>(null);
+
+  const togglePasswordVisibility = (teacherId: string) => {
+    setShowPasswordMap((prev) => ({ ...prev, [teacherId]: !prev[teacherId] }));
+  };
+
+  const handleCopyText = (text: string, key: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const handleOpenEditTeacher = (teacher: Teacher) => {
+    setEditingTeacher(teacher);
+    setEditTeacherEmail(teacher.email || '');
+    setEditTeacherPassword(teacher.password || teacher.passwordHash || 'prof123');
+    setEditTeacherSubject(teacher.subject || '');
+  };
+
+  const handleSaveTeacherEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTeacher) return;
+    const updated: Teacher = {
+      ...editingTeacher,
+      email: editTeacherEmail.trim(),
+      password: editTeacherPassword.trim(),
+      passwordHash: editTeacherPassword.trim(),
+      subject: editTeacherSubject.trim(),
+    };
+    if (onUpdateTeacher) {
+      await onUpdateTeacher(updated);
+    }
+    setEditingTeacher(null);
+  };
+
+  const handlePushAllTeachers = async () => {
+    if (onPushTeachersToSupabase) {
+      setIsSyncingTeachers(true);
+      setTeacherSyncStatus('Sincronizando com Supabase...');
+      try {
+        await onPushTeachersToSupabase();
+        setTeacherSyncStatus('Professores sincronizados no Supabase com sucesso!');
+      } catch (err: any) {
+        setTeacherSyncStatus('Erro ao sincronizar professores.');
+      } finally {
+        setIsSyncingTeachers(false);
+        setTimeout(() => setTeacherSyncStatus(null), 4000);
+      }
+    }
+  };
+
+  const handlePullAllTeachers = async () => {
+    if (onSyncTeachersFromSupabase) {
+      setIsSyncingTeachers(true);
+      setTeacherSyncStatus('Buscando atualizações do Supabase...');
+      try {
+        await onSyncTeachersFromSupabase();
+        setTeacherSyncStatus('Dados atualizados do Supabase!');
+      } catch (err: any) {
+        setTeacherSyncStatus('Erro ao buscar professores do banco.');
+      } finally {
+        setIsSyncingTeachers(false);
+        setTimeout(() => setTeacherSyncStatus(null), 4000);
+      }
+    }
+  };
 
   // Activity Management State (Item 9)
   const [showActivityModal, setShowActivityModal] = useState(false);
@@ -1037,6 +1127,431 @@ export function DirectorDashboard({
               })
             )}
           </div>
+        </div>
+      )}
+
+      {/* ==================================================
+          SECTION: PROFESSORES & CREDENCIAIS SUPABASE (DIR_TEACHERS)
+          ================================================== */}
+      {activeDirectorTab === 'DIR_TEACHERS' && (
+        <div className="space-y-6">
+          {/* Header & Status Banner */}
+          <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-100 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                    Corpo Docente & Credenciais
+                  </span>
+                  <span className="text-xs text-slate-400">&bull;</span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    {teachers.length} Professores cadastrados
+                  </span>
+                </div>
+                <h3 className="text-lg font-extrabold text-slate-900">
+                  Gerenciamento de Contas e Credenciais dos Professores
+                </h3>
+                <p className="text-xs text-slate-500 max-w-2xl mt-0.5">
+                  Visualize os e-mails e senhas de acesso de cada professor. Você pode alterar o Gmail e a senha diretamente aqui ou sincronizar em lote com as tabelas <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">professores</code>, <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">usuarios</code> e <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700 font-mono">teachers</code> do Supabase.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePushAllTeachers}
+                  disabled={isSyncingTeachers}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-2 shadow-sm"
+                  title="Salvar todas as contas de professores no banco de dados Supabase"
+                >
+                  <Database className={`w-3.5 h-3.5 ${isSyncingTeachers ? 'animate-spin' : ''}`} />
+                  <span>Salvar Todos no Supabase</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePullAllTeachers}
+                  disabled={isSyncingTeachers}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-2 border border-slate-200"
+                  title="Carregar alterações feitas direto no painel do Supabase"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingTeachers ? 'animate-spin' : ''}`} />
+                  <span>Atualizar do Supabase</span>
+                </button>
+
+                {onOpenSupabaseModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenSupabaseModal}
+                    className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 border border-purple-200"
+                    title="Configurações e Scripts SQL do Supabase"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                    <span>Config Supabase</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Sync Status Banner if active */}
+            {teacherSyncStatus && (
+              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-2xl flex items-center gap-2.5 text-xs text-indigo-900 font-medium">
+                <AlertCircle className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>{teacherSyncStatus}</span>
+              </div>
+            )}
+
+            {/* Supabase Notice Box */}
+            <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl text-xs text-slate-600 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-slate-800">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span>Como funciona a sincronização no Supabase:</span>
+              </div>
+              <p>
+                Quando você clica em <strong>"Salvar no Supabase"</strong> ou <strong>"Salvar Todos no Supabase"</strong>, o portal atualiza automaticamente o Gmail e a senha nas tabelas <code>professores</code> e <code>usuarios</code>.
+                Se a tabela de professores ainda não existir no seu Supabase, abra <strong>Config Supabase</strong> no menu e execute o script SQL atualizado no SQL Editor do Supabase.
+              </p>
+            </div>
+
+            {/* Search Input */}
+            <div className="relative max-w-sm w-full">
+              <input
+                type="text"
+                value={teacherSearch}
+                onChange={(e) => setTeacherSearch(e.target.value)}
+                placeholder="Buscar professor por nome, disciplina ou e-mail..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
+              />
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            </div>
+          </div>
+
+          {/* Desktop Table View */}
+          <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-100 shadow-sm overflow-hidden hidden md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs sm:text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100 text-slate-400 text-[11px] uppercase tracking-wider font-semibold">
+                    <th className="pb-3 px-4">Professor</th>
+                    <th className="pb-3 px-4">Disciplina / Matéria</th>
+                    <th className="pb-3 px-4">Gmail / E-mail de Acesso</th>
+                    <th className="pb-3 px-4">Senha Cadastrada</th>
+                    <th className="pb-3 px-4 text-center">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {teachers
+                    .filter((t) => {
+                      if (!teacherSearch.trim()) return true;
+                      const q = teacherSearch.toLowerCase();
+                      return (
+                        t.name.toLowerCase().includes(q) ||
+                        t.subject.toLowerCase().includes(q) ||
+                        t.email.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((teacher) => {
+                      const isPwdVisible = Boolean(showPasswordMap[teacher.id]);
+                      const currentPwd = teacher.password || teacher.passwordHash || 'prof123';
+                      const emailCopied = copiedKey === `email-${teacher.id}`;
+                      const pwdCopied = copiedKey === `pwd-${teacher.id}`;
+
+                      return (
+                        <tr key={teacher.id} className="hover:bg-slate-50/60 transition group">
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={teacher.avatar}
+                                alt={teacher.name}
+                                className="w-10 h-10 rounded-full object-cover border-2 border-indigo-100 shadow-xs"
+                              />
+                              <div>
+                                <div className="font-bold text-slate-900">{teacher.name}</div>
+                                <div className="text-[11px] text-slate-400">{teacher.availableHours || 'Horário comercial'}</div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-4 px-4 font-medium text-slate-700">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold">
+                              <BookOpen className="w-3 h-3" />
+                              {teacher.subject}
+                            </span>
+                          </td>
+
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-200">
+                                {teacher.email}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(teacher.email, `email-${teacher.id}`)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition cursor-pointer"
+                                title="Copiar Gmail"
+                              >
+                                {emailCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-200">
+                                {isPwdVisible ? currentPwd : '••••••••••••'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => togglePasswordVisibility(teacher.id)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition cursor-pointer"
+                                title={isPwdVisible ? 'Ocultar senha' : 'Ver senha'}
+                              >
+                                {isPwdVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(currentPwd, `pwd-${teacher.id}`)}
+                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition cursor-pointer"
+                                title="Copiar senha"
+                              >
+                                {pwdCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+
+                          <td className="py-4 px-4 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditTeacher(teacher)}
+                                className="px-3 py-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 border border-slate-200"
+                                title="Alterar Gmail ou Senha"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                                <span>Editar</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (onUpdateTeacher) {
+                                    await onUpdateTeacher(teacher);
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5 border border-indigo-200"
+                                title="Sincronizar este professor imediatamente no Supabase"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                <span>Salvar no Supabase</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mobile Cards View */}
+          <div className="md:hidden space-y-3">
+            {teachers
+              .filter((t) => {
+                if (!teacherSearch.trim()) return true;
+                const q = teacherSearch.toLowerCase();
+                return (
+                  t.name.toLowerCase().includes(q) ||
+                  t.subject.toLowerCase().includes(q) ||
+                  t.email.toLowerCase().includes(q)
+                );
+              })
+              .map((teacher) => {
+                const isPwdVisible = Boolean(showPasswordMap[teacher.id]);
+                const currentPwd = teacher.password || teacher.passwordHash || 'prof123';
+                const emailCopied = copiedKey === `email-${teacher.id}`;
+                const pwdCopied = copiedKey === `pwd-${teacher.id}`;
+
+                return (
+                  <div
+                    key={teacher.id}
+                    className="p-4 bg-white rounded-3xl border border-slate-100 shadow-sm space-y-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={teacher.avatar}
+                        alt={teacher.name}
+                        className="w-12 h-12 rounded-full object-cover border-2 border-indigo-100 shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <h4 className="font-bold text-sm text-slate-900 truncate">{teacher.name}</h4>
+                        <p className="text-xs text-indigo-600 font-medium truncate">{teacher.subject}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2 border-t border-slate-100 text-xs">
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Gmail Cadastrado</span>
+                        <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl mt-0.5">
+                          <span className="font-mono text-xs text-slate-800 truncate">{teacher.email}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(teacher.email, `email-${teacher.id}`)}
+                            className="p-1 text-slate-400 hover:text-indigo-600"
+                          >
+                            {emailCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Senha de Acesso</span>
+                        <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl mt-0.5">
+                          <span className="font-mono text-xs text-slate-800">
+                            {isPwdVisible ? currentPwd : '••••••••••••'}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => togglePasswordVisibility(teacher.id)}
+                              className="p-1 text-slate-400 hover:text-indigo-600"
+                            >
+                              {isPwdVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyText(currentPwd, `pwd-${teacher.id}`)}
+                              className="p-1 text-slate-400 hover:text-indigo-600"
+                            >
+                              {pwdCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditTeacher(teacher)}
+                        className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        <span>Editar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (onUpdateTeacher) {
+                            await onUpdateTeacher(teacher);
+                          }
+                        }}
+                        className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Salvar no Supabase</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          {/* Edit Teacher Modal */}
+          {editingTeacher && (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-slate-100 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={editingTeacher.avatar}
+                      alt={editingTeacher.name}
+                      className="w-10 h-10 rounded-full object-cover border border-indigo-200"
+                    />
+                    <div>
+                      <h3 className="font-extrabold text-base text-slate-900">{editingTeacher.name}</h3>
+                      <p className="text-xs text-indigo-600 font-medium">Editar Credenciais e Supabase</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingTeacher(null)}
+                    className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveTeacherEdit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Disciplina / Especialidade
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editTeacherSubject}
+                      onChange={(e) => setEditTeacherSubject(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Gmail / E-mail de Acesso
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={editTeacherEmail}
+                      onChange={(e) => setEditTeacherEmail(e.target.value)}
+                      placeholder="exemplo@escola.com.br ou gmail"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Senha de Acesso do Professor
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        required
+                        value={editTeacherPassword}
+                        onChange={(e) => setEditTeacherPassword(e.target.value)}
+                        placeholder="Digite a nova senha"
+                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
+                      />
+                      <Key className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Esta senha será sincronizada nas tabelas <code>professores</code> e <code>usuarios</code> do Supabase.
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditingTeacher(null)}
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Salvar e Sincronizar</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

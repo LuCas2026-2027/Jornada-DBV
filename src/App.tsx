@@ -6,6 +6,7 @@ import {
   persistNotices,
   persistCourses,
   persistStudents,
+  persistTeachers,
   deleteStudent,
   removeMockStudentAccounts,
   persistNotifications,
@@ -50,6 +51,9 @@ import {
   fetchStudentsFromSupabase,
   fetchActivitiesFromSupabase,
   fetchNoticesFromSupabase,
+  fetchTeachersFromSupabase,
+  upsertTeacherToSupabase,
+  pushTeachersToSupabase,
 } from './services/supabaseService';
 import { isSupabaseConfigured } from './lib/supabase';
 
@@ -114,10 +118,11 @@ export default function App() {
   const loadSupabaseData = async () => {
     if (!isSupabaseConfigured()) return;
     try {
-      const [remoteStudents, remoteActivities, remoteNotices] = await Promise.all([
+      const [remoteStudents, remoteActivities, remoteNotices, remoteTeachers] = await Promise.all([
         fetchStudentsFromSupabase(),
         fetchActivitiesFromSupabase(),
         fetchNoticesFromSupabase(),
+        fetchTeachersFromSupabase(),
       ]);
 
       setAppState((prev) => ({
@@ -125,9 +130,94 @@ export default function App() {
         students: remoteStudents && remoteStudents.length > 0 ? remoteStudents : prev.students,
         activities: remoteActivities && remoteActivities.length > 0 ? remoteActivities : prev.activities,
         notices: remoteNotices && remoteNotices.length > 0 ? remoteNotices : prev.notices,
+        teachers: remoteTeachers && remoteTeachers.length > 0 ? remoteTeachers : prev.teachers,
       }));
     } catch (e) {
       console.warn('Erro ao carregar dados do Supabase:', e);
+    }
+  };
+
+  // Teacher Handlers
+  const handleUpdateTeacher = async (updatedTeacher: Teacher) => {
+    const updated = appState.teachers.map((t) => (t.id === updatedTeacher.id ? updatedTeacher : t));
+    persistTeachers(updated);
+    setAppState((prev) => ({ ...prev, teachers: updated }));
+
+    if (isSupabaseConfigured()) {
+      try {
+        const res = await upsertTeacherToSupabase(updatedTeacher);
+        if (res.success) {
+          addToast(
+            'Professor salvo no Supabase!',
+            `${updatedTeacher.name} foi sincronizado nas tabelas: ${res.tables.join(', ')}.`,
+            'SUCCESS'
+          );
+        } else {
+          addToast(
+            'Salvo localmente',
+            `Salvo no dispositivo. Aviso Supabase: ${res.error || 'Execute o script SQL do Supabase para criar as tabelas.'}`,
+            'WARNING',
+            6000
+          );
+        }
+      } catch (err: any) {
+        addToast('Salvo localmente', 'Aviso ao conectar com Supabase.', 'WARNING');
+      }
+    } else {
+      addToast('Credenciais salvas!', 'Atualizado no armazenamento local do portal.', 'SUCCESS');
+    }
+  };
+
+  const handleSyncTeachersFromSupabase = async () => {
+    if (!isSupabaseConfigured()) {
+      addToast('Supabase não conectado', 'Configure a URL e Anon Key primeiro.', 'WARNING');
+      return;
+    }
+    try {
+      const remoteTeachers = await fetchTeachersFromSupabase();
+      if (remoteTeachers && remoteTeachers.length > 0) {
+        persistTeachers(remoteTeachers);
+        setAppState((prev) => ({ ...prev, teachers: remoteTeachers }));
+        addToast(
+          'Professores sincronizados!',
+          `${remoteTeachers.length} contas de professores carregadas do banco de dados.`,
+          'SUCCESS'
+        );
+      } else {
+        addToast(
+          'Nenhum dado novo',
+          'Nenhum registro encontrado nas tabelas de professores do Supabase.',
+          'INFO'
+        );
+      }
+    } catch (err: any) {
+      addToast('Erro na sincronização', err?.message || 'Falha ao buscar professores.', 'ERROR');
+    }
+  };
+
+  const handlePushTeachersToSupabase = async () => {
+    if (!isSupabaseConfigured()) {
+      addToast('Supabase não conectado', 'Configure a URL e Anon Key primeiro.', 'WARNING');
+      return;
+    }
+    try {
+      const ok = await pushTeachersToSupabase(appState.teachers);
+      if (ok) {
+        addToast(
+          'Contas sincronizadas no Supabase!',
+          'Todas as contas e credenciais dos professores foram salvas no Supabase.',
+          'SUCCESS'
+        );
+      } else {
+        addToast(
+          'Aviso de salvamento',
+          'Verifique se as tabelas professores/usuarios estão criadas no Supabase SQL Editor.',
+          'WARNING',
+          6000
+        );
+      }
+    } catch (err: any) {
+      addToast('Erro ao sincronizar', err?.message || 'Falha de conexão com o banco.', 'ERROR');
     }
   };
 
@@ -695,6 +785,7 @@ export default function App() {
               students={students}
               activities={activities}
               notices={notices}
+              teachers={teachers}
               activeDirectorTab={activeTab}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onOpenSupabaseModal={() => setShowSupabaseModal(true)}
@@ -710,6 +801,9 @@ export default function App() {
               onDeleteNotice={handleDeleteNotice}
               onDeleteStudent={handleDeleteStudent}
               onRemoveMockStudents={handleRemoveMockStudents}
+              onUpdateTeacher={handleUpdateTeacher}
+              onSyncTeachersFromSupabase={handleSyncTeachersFromSupabase}
+              onPushTeachersToSupabase={handlePushTeachersToSupabase}
             />
           )}
 

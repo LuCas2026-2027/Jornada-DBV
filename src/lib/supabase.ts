@@ -240,6 +240,16 @@ CREATE TABLE IF NOT EXISTS usuarios (
   status_online TEXT DEFAULT 'ONLINE' CHECK (status_online IN ('ONLINE', 'RESPONDENDO', 'OFFLINE'))
 );
 
+-- Atualização automática caso a tabela usuarios já exista com a constraint antiga:
+DO $$
+BEGIN
+  ALTER TABLE IF EXISTS usuarios DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+  ALTER TABLE IF EXISTS usuarios ADD CONSTRAINT usuarios_tipo_usuario_check 
+    CHECK (tipo_usuario IN ('ALUNO', 'DIRETOR', 'PROFESSOR'));
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
+
 -- 2. TABELA PROFESSORES (Corpo Docente - Credenciais e Dados)
 -- Permite trocar senha e Gmail diretamente pelo painel do Supabase
 CREATE TABLE IF NOT EXISTS professores (
@@ -436,6 +446,7 @@ CREATE TABLE IF NOT EXISTS app_notifications (
 
 ALTER TABLE usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE alunos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE professores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE atividades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE questoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE respostas ENABLE ROW LEVEL SECURITY;
@@ -453,6 +464,9 @@ ALTER TABLE app_notifications ENABLE ROW LEVEL SECURITY;
 -- Políticas de Permissão Total para o Portal Escolar (SELECT, INSERT, UPDATE, DELETE):
 DROP POLICY IF EXISTS "Acesso total usuarios" ON usuarios;
 CREATE POLICY "Acesso total usuarios" ON usuarios FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Acesso total professores" ON professores;
+CREATE POLICY "Acesso total professores" ON professores FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Acesso total alunos" ON alunos;
 CREATE POLICY "Acesso total alunos" ON alunos FOR ALL USING (true) WITH CHECK (true);

@@ -410,6 +410,8 @@ export async function syncAllTeachersToSupabase(teachers: Teacher[]): Promise<bo
   return anySuccess;
 }
 
+export const pushTeachersToSupabase = syncAllTeachersToSupabase;
+
 // Convert activities between DB and app
 export async function fetchActivitiesFromSupabase(): Promise<Activity[] | null> {
   const supabase = getSupabase();
@@ -525,6 +527,7 @@ export async function migrateAllLocalDataToSupabase(state: {
   notices: SchoolNotice[];
   courses: Course[];
   notifications: AppNotification[];
+  teachers?: Teacher[];
 }): Promise<{ success: boolean; counts: Record<string, number>; message: string }> {
   const supabase = getSupabase();
   if (!supabase) {
