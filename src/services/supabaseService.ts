@@ -14,20 +14,18 @@ function checkAndMarkUnreachable(error: any, context?: string): boolean {
     msg.includes('Load failed') ||
     msg.includes('net::ERR') ||
     msg.includes('timeout') ||
-    msg.includes('Failed to load resource')
+    msg.includes('Failed to load resource') ||
+    msg.includes('ENOTFOUND')
   ) {
     markSupabaseUnreachable('Failed to fetch');
     return true;
-  }
-  if (context && !msg.includes('PGRST116')) {
-    console.warn(`[Supabase - ${context}]:`, msg);
   }
   return false;
 }
 
 // Convert student record between DB and app (supports both 'usuarios' and 'students' tables)
 export async function fetchStudentsFromSupabase(): Promise<(User & { passwordHash: string })[] | null> {
-  if (isSupabaseUnreachable()) return null;
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
@@ -97,6 +95,9 @@ export async function fetchStudentsFromSupabase(): Promise<(User & { passwordHas
 export async function upsertStudentToSupabase(
   student: User & { passwordHash: string }
 ): Promise<{ success: boolean; error?: string; tables: string[] }> {
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não conectado (Modo Local ativo)', tables: [] };
+  }
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase não configurado', tables: [] };
 
@@ -182,6 +183,7 @@ export async function upsertStudentToSupabase(
  * Remove an account from Supabase tables ('alunos', 'usuarios', 'students')
  */
 export async function deleteStudentFromSupabase(studentId: string): Promise<boolean> {
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 
@@ -212,6 +214,7 @@ export async function upsertDirectorToSupabase(
   director: User,
   passwordHash = 'diretor123'
 ): Promise<boolean> {
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 
@@ -238,7 +241,7 @@ export async function upsertDirectorToSupabase(
  * Fetch teachers from Supabase (supports 'usuarios' with tipo_usuario='PROFESSOR', 'professores', and 'teachers' tables)
  */
 export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
-  if (isSupabaseUnreachable()) return null;
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
@@ -351,6 +354,9 @@ export async function fetchTeachersFromSupabase(): Promise<Teacher[] | null> {
 export async function upsertTeacherToSupabase(
   teacher: Teacher
 ): Promise<{ success: boolean; error?: string; tables: string[] }> {
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não conectado (Modo Local ativo)', tables: [] };
+  }
   const supabase = getSupabase();
   if (!supabase) return { success: false, error: 'Supabase não configurado', tables: [] };
 
@@ -443,6 +449,7 @@ export async function upsertTeacherToSupabase(
  * Synchronizes all teachers to Supabase in batch
  */
 export async function syncAllTeachersToSupabase(teachers: Teacher[]): Promise<boolean> {
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 
@@ -458,7 +465,7 @@ export const pushTeachersToSupabase = syncAllTeachersToSupabase;
 
 // Convert activities between DB and app (supports both 'activities' and 'atividades' tables)
 export async function fetchActivitiesFromSupabase(): Promise<Activity[] | null> {
-  if (isSupabaseUnreachable()) return null;
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
@@ -523,7 +530,7 @@ export async function fetchActivitiesFromSupabase(): Promise<Activity[] | null> 
 }
 
 export async function upsertActivityToSupabase(activity: Activity): Promise<boolean> {
-  if (isSupabaseUnreachable()) return false;
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 
@@ -560,7 +567,7 @@ export async function upsertActivityToSupabase(activity: Activity): Promise<bool
 
 // Convert school notices between DB and app
 export async function fetchNoticesFromSupabase(): Promise<SchoolNotice[] | null> {
-  if (isSupabaseUnreachable()) return null;
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return null;
   const supabase = getSupabase();
   if (!supabase) return null;
 
@@ -588,7 +595,7 @@ export async function fetchNoticesFromSupabase(): Promise<SchoolNotice[] | null>
 }
 
 export async function upsertNoticeToSupabase(notice: SchoolNotice): Promise<boolean> {
-  if (isSupabaseUnreachable()) return false;
+  if (isSupabaseUnreachable() || !isSupabaseConfigured()) return false;
   const supabase = getSupabase();
   if (!supabase) return false;
 

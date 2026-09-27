@@ -241,11 +241,9 @@ export function persistSession(user: User | null): void {
 export function persistStudents(students: (User & { passwordHash: string })[]): void {
   try {
     localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
-    // Sincronização em segundo plano com Supabase
+    // Sincronização em segundo plano com Supabase se disponível
     students.forEach((s) => {
-      upsertStudentToSupabase(s).catch((err) => {
-        console.warn('[Supabase] Falha silenciosa ao sincronizar aluno:', err);
-      });
+      upsertStudentToSupabase(s).catch(() => {});
     });
   } catch (e) {
     console.error('Erro ao salvar alunos:', e);
@@ -306,9 +304,7 @@ export function persistTeachers(teachers: Teacher[]): void {
   try {
     localStorage.setItem(TEACHERS_KEY, JSON.stringify(teachers));
     teachers.forEach((t) => {
-      upsertTeacherToSupabase(t).catch((err) => {
-        console.warn('Erro ao sincronizar professor no Supabase:', err);
-      });
+      upsertTeacherToSupabase(t).catch(() => {});
     });
   } catch (e) {
     console.error('Erro ao persistir professores:', e);
@@ -334,9 +330,7 @@ export function updateTeacherCredentials(
           passwordHash: newPassword.trim(),
         };
         // Sincroniza imediatamente com o Supabase em segundo plano
-        upsertTeacherToSupabase(updated).catch((err) => {
-          console.warn('[Supabase] Erro ao sincronizar credenciais do professor:', err);
-        });
+        upsertTeacherToSupabase(updated).catch(() => {});
         return updated;
       }
       return t;

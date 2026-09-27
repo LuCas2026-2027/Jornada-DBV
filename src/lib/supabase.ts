@@ -3,6 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 export const SUPABASE_LOCAL_URL_KEY = 'escola_supabase_url';
 export const SUPABASE_LOCAL_KEY_KEY = 'escola_supabase_anon_key';
 export const SUPABASE_DISABLED_KEY = 'escola_supabase_disabled';
+export const SUPABASE_UNREACHABLE_KEY = 'escola_supabase_unreachable_info';
 
 // Circuit breaker state to prevent repeatedly hammering an unreachable or paused host
 let isUnreachable = false;
@@ -10,19 +11,72 @@ let unreachableReason = '';
 let unreachableUntil = 0;
 
 export function markSupabaseUnreachable(reason = 'Failed to fetch'): void {
+  const { url } = getStoredSupabaseCredentials();
+  const cleanUrl = normalizeSupabaseUrl(url);
   isUnreachable = true;
   unreachableReason = reason;
-  unreachableUntil = Date.now() + 60 * 1000; // 60s cooldown before background auto-retry
+  unreachableUntil = Date.now() + 60 * 60 * 1000; // 1 hora de retenção para evitar loop de erros de rede
+
+  try {
+    localStorage.setItem(
+      SUPABASE_UNREACHABLE_KEY,
+      JSON.stringify({
+        unreachable: true,
+        reason,
+        url: cleanUrl,
+        until: unreachableUntil,
+      })
+    );
+  } catch {
+    // ignore
+  }
 }
 
 export function isSupabaseUnreachable(): boolean {
-  if (!isUnreachable) return false;
-  if (Date.now() > unreachableUntil) {
+  if (isUnreachable) {
+    if (Date.now() <= unreachableUntil) return true;
     isUnreachable = false;
     unreachableReason = '';
-    return false;
   }
-  return true;
+
+  // Verifica estado persistido no armazenamento local
+  try {
+    const raw = localStorage.getItem(SUPABASE_UNREACHABLE_KEY);
+    if (raw) {
+      const state = JSON.parse(raw);
+      const { url } = getStoredSupabaseCredentials();
+      const cleanUrl = normalizeSupabaseUrl(url);
+      if (state.url === cleanUrl && Date.now() < state.until) {
+        isUnreachable = true;
+        unreachableReason = state.reason;
+        unreachableUntil = state.until;
+        return true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Prevenção proativa: projeto inexistente no DNS do Supabase (icfihfrvczgqsrtvsfwt)
+  // Se o usuário não configurou uma URL manual diferente no localStorage, marca como inativo
+  try {
+    let localUrl = '';
+    if (typeof localStorage !== 'undefined') {
+      localUrl = localStorage.getItem(SUPABASE_LOCAL_URL_KEY) || '';
+    }
+    if (!localUrl) {
+      const { url } = getStoredSupabaseCredentials();
+      if (url && url.includes('icfihfrvczgqsrtvsfwt')) {
+        isUnreachable = true;
+        unreachableReason = 'Projeto inexistente ou pausado no Supabase (icfihfrvczgqsrtvsfwt)';
+        return true;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
 }
 
 export function getSupabaseUnreachableReason(): string {
@@ -33,6 +87,11 @@ export function clearSupabaseUnreachable(): void {
   isUnreachable = false;
   unreachableReason = '';
   unreachableUntil = 0;
+  try {
+    localStorage.removeItem(SUPABASE_UNREACHABLE_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 export function isSupabaseDisabledManually(): boolean {

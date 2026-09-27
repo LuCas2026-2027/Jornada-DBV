@@ -61,7 +61,29 @@ export function SupabaseModal({ isOpen, onClose, appState, onDataRefreshed }: Su
       const creds = getStoredSupabaseCredentials();
       setUrlInput(creds.url);
       setKeyInput(creds.anonKey);
-      handleTestConnection();
+      if (isSupabaseDisabledManually()) {
+        setTestResult({
+          success: false,
+          status: 'not_configured',
+          message: 'Modo Local Ativo. O Supabase está pausado manualmente.',
+        });
+      } else if (isSupabaseUnreachable()) {
+        setTestResult({
+          success: false,
+          status: 'unreachable',
+          message:
+            'O servidor do Supabase configurado está inacessível ou o projeto gratuito foi pausado/desativado. O aplicativo está operando perfeitamente no Modo 100% Local.',
+          details: 'Para conectar um novo banco na nuvem, insira a URL e Chave Anon de um projeto ativo e clique em "Salvar Credenciais".',
+        });
+      } else if (!isSupabaseConfigured()) {
+        setTestResult({
+          success: false,
+          status: 'not_configured',
+          message: 'Supabase não configurado. O portal está utilizando o armazenamento local.',
+        });
+      } else {
+        handleTestConnection();
+      }
     }
   }, [isOpen]);
 
