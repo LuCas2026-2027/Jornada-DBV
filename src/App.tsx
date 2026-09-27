@@ -224,6 +224,15 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if ((window as any).__MARK_PORTAL_READY__) {
+        (window as any).__MARK_PORTAL_READY__();
+      }
+      const loader = document.getElementById('app-initial-loader');
+      if (loader && loader.parentNode) {
+        loader.parentNode.removeChild(loader);
+      }
+    }
     loadSupabaseData();
   }, []);
 

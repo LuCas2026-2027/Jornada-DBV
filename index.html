@@ -69,7 +69,25 @@
     <script>
       (function() {
         var hasReactMounted = false;
-        var capturedError = null;
+        var watchdogTimer = null;
+
+        window.__MARK_PORTAL_READY__ = function() {
+          hasReactMounted = true;
+          if (watchdogTimer) {
+            clearTimeout(watchdogTimer);
+            watchdogTimer = null;
+          }
+          var loader = document.getElementById('app-initial-loader');
+          if (loader) {
+            loader.style.opacity = '0';
+            loader.style.transition = 'opacity 0.2s ease';
+            setTimeout(function() {
+              if (loader && loader.parentNode) {
+                loader.parentNode.removeChild(loader);
+              }
+            }, 200);
+          }
+        };
 
         function showDiagnosis(msg, isError) {
           if (hasReactMounted) return;
@@ -90,8 +108,8 @@
             if (titleEl) titleEl.innerText = 'Inicialização Pendente';
             if (subtitleEl) subtitleEl.innerText = 'Não foi possível carregar os arquivos do aplicativo.';
           } else {
-            if (titleEl) titleEl.innerText = 'O portal está demorando a responder';
-            if (subtitleEl) subtitleEl.innerText = 'Verificando conexão e arquivos estáticos...';
+            if (titleEl) titleEl.innerText = 'Inicializando o Portal Escolar';
+            if (subtitleEl) subtitleEl.innerText = 'O ambiente está carregando os módulos do sistema...';
           }
 
           detailsText.innerHTML = msg;
@@ -100,32 +118,34 @@
         }
 
         window.addEventListener('error', function(e) {
-          capturedError = e;
-          var msg = e && e.message ? e.message : 'Erro ao carregar arquivos JavaScript.';
+          if (hasReactMounted) return;
+          var msg = e && e.message ? String(e.message) : '';
           
-          // Detecta tentativa de carregar .tsx direto no navegador
-          if (e && e.filename && e.filename.indexOf('.tsx') !== -1) {
-            showDiagnosis('<strong>Aviso do GitHub Pages:</strong> O navegador tentou abrir o arquivo fonte <code>' + e.filename + '</code>. No GitHub, o site precisa ser publicado com a compilação do Vite (pasta <code>dist</code> ou GitHub Actions) e não com o arquivo TypeScript puro.', true);
+          // Ignora avisos comuns que não impedem a inicialização
+          if (msg.includes('ResizeObserver') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
             return;
           }
 
-          showDiagnosis('<strong>Detalhe:</strong> ' + msg + '<br><small style="color: #64748b;">Se você publicou no GitHub Pages, certifique-se de ativar o <strong>GitHub Actions</strong> em <em>Settings &gt; Pages</em> para compilar o projeto automaticamente.</small>', true);
+          var isGitHub = window.location.hostname.indexOf('github.io') !== -1;
+          var extraHint = '';
+          if (isGitHub && e.filename && e.filename.indexOf('.tsx') !== -1) {
+            extraHint = '<br><small style="color: #64748b;">No GitHub Pages, certifique-se de ativar o <strong>GitHub Actions</strong> em <em>Settings &gt; Pages</em> para compilar o projeto automaticamente.</small>';
+          }
+
+          showDiagnosis('<strong>Detalhe:</strong> ' + (msg || 'Erro na execução dos scripts.') + extraHint, true);
         });
 
-        // Watchdog: após 5 segundos, se o React não tiver montado, orienta o usuário
-        setTimeout(function() {
+        // Watchdog resiliente: apenas se demorar excessivamente (> 15 segundos)
+        watchdogTimer = setTimeout(function() {
+          if (hasReactMounted) return;
           var root = document.getElementById('root');
           var initialLoader = document.getElementById('app-initial-loader');
           if (initialLoader && root && root.contains(initialLoader)) {
-            var isGitHub = window.location.hostname.indexOf('github.io') !== -1 || window.location.hostname.indexOf('github') !== -1;
-            var advice = 'O carregamento demorou mais que o esperado.<br><br>' +
-              '<strong>Dica para o seu domínio no GitHub:</strong><br>' +
-              '• No seu repositório do GitHub, vá em <strong>Settings &gt; Pages</strong>.<br>' +
-              '• Em <strong>Build and deployment &gt; Source</strong>, selecione <strong>GitHub Actions</strong>.<br>' +
-              '• O arquivo de deploy automatizado que criamos irá compilar a aplicação e publicá-la no seu domínio automaticamente.';
-            showDiagnosis(advice, false);
+            var msg = 'A inicialização está demorando um pouco mais para carregar os recursos. ' +
+              'Se demorar muito, você pode recarregar a página ou limpar o cache local para reiniciar o portal limpo.';
+            showDiagnosis(msg, false);
           }
-        }, 5000);
+        }, 15000);
       })();
     </script>
 

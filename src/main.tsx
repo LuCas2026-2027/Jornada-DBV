@@ -8,6 +8,11 @@ const container = document.getElementById('root');
 
 if (container) {
   try {
+    // Notify loader that React script has executed
+    if (typeof window !== 'undefined' && (window as any).__MARK_PORTAL_READY__) {
+      (window as any).__MARK_PORTAL_READY__();
+    }
+
     const root = createRoot(container);
     root.render(
       <StrictMode>
@@ -16,6 +21,12 @@ if (container) {
         </ErrorBoundary>
       </StrictMode>,
     );
+
+    // Ensure loader element is completely removed
+    const loader = document.getElementById('app-initial-loader');
+    if (loader && loader.parentNode) {
+      loader.parentNode.removeChild(loader);
+    }
   } catch (err) {
     console.error('[Portal Escolar] Falha crítica ao inicializar React:', err);
     container.innerHTML = `
